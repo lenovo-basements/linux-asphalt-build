@@ -1,0 +1,66 @@
+#!/bin/sh
+# Bypass charging: while a charger is connected the system runs from it and the
+# battery is held (neither charged nor discharged), like Lenovo's stock toggle.
+#
+# The kernel exposes this as charge_behaviour=inhibit-charge (battmgr property
+# 27 = 0). The firmware forgets it whenever the battmgr service restarts (the
+# kernel then reads ENODATA), so the user's choice is kept in STATE and
+# re-applied by "restore" from udev on every battery change event.
+
+BAT=/sys/class/power_supply/qcom-battmgr-bat
+STATE=/var/lib/y700/bypass-charge
+
+wanted() {
+    [ "$(cat "$STATE" 2>/dev/null)" = on ] && echo inhibit-charge || echo auto
+}
+
+reported() {
+    case "$(cat "$BAT/charge_behaviour" 2>/dev/null)" in
+        *'[auto]'*) echo auto ;;
+        *'[inhibit-charge]'*) echo inhibit-charge ;;
+        *) echo unknown ;;
+    esac
+}
+
+apply() {
+    [ -w "$BAT/charge_behaviour" ] || {
+        echo "Error: $BAT/charge_behaviour is not writable." >&2
+        return 1
+    }
+    printf '%s\n' "$1" > "$BAT/charge_behaviour" 2>/dev/null &&
+        [ "$(reported)" = "$1" ] || {
+        echo "Error: battmgr did not accept charge_behaviour=$1." >&2
+        return 1
+    }
+}
+
+save() {
+    mkdir -p "${STATE%/*}" && printf '%s\n' "$1" > "$STATE"
+}
+
+case "${1:-status}" in
+    status)
+        echo "Bypass:   $(cat "$STATE" 2>/dev/null || echo off)"
+        echo "Policy:   $(reported)"
+        echo "Battery:  $(cat "$BAT/capacity" 2>/dev/null)% $(cat "$BAT/status" 2>/dev/null)"
+        ;;
+    on|enable)
+        save on && apply inhibit-charge
+        ;;
+    off|disable)
+        save off && apply auto
+        ;;
+    restore)
+        # Unknown (ENODATA) after boot or a firmware restart: the firmware is
+        # back to charging, but the kernel cannot read that back, so write the
+        # choice explicitly (auto included) to make the policy readable again.
+        want=$(wanted)
+        now=$(reported)
+        [ "$now" = "$want" ] && exit 0
+        apply "$want"
+        ;;
+    *)
+        echo "Usage: y700-bypass-charge [status|enable|disable|restore]" >&2
+        exit 1
+        ;;
+esac

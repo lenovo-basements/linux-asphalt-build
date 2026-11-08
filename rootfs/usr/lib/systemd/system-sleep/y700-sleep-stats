@@ -1,0 +1,74 @@
+#!/bin/sh
+# Capture endpoints only: no timer or periodic wakeup during suspend.
+case "$1:$2" in
+    pre:suspend|post:suspend) ;;
+    *) exit 0 ;;
+esac
+# Firmware-backed power_supply reads must not hold up suspend indefinitely.
+/usr/bin/timeout 4s /usr/bin/python3 - "$1" <<'PY'
+import datetime
+import json
+from pathlib import Path
+import sys
+import time
+
+
+def read(path):
+    try:
+        return Path(path).read_text().strip()
+    except OSError as error:
+        return {"errno": error.errno}
+
+
+record = {
+    "phase": sys.argv[1],
+    "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "boottime_s": time.clock_gettime(time.CLOCK_BOOTTIME),
+    "monotonic_s": time.monotonic(),
+    "boot_id": read("/proc/sys/kernel/random/boot_id"),
+    "battery": {},
+    "soc_sleep": {},
+    "runtime": {},
+    "external_power": {},
+    "usb_gadget": {},
+}
+for supply in Path("/sys/class/power_supply").glob("*"):
+    if read(supply / "type") != "Battery":
+        if (supply / "online").exists():
+            record["external_power"][supply.name] = read(supply / "online")
+        continue
+    record["battery"][supply.name] = {
+        key: read(supply / key)
+        for key in ("status", "capacity", "charge_counter", "charge_now",
+                    "charge_full", "energy_now", "energy_full", "voltage_now")
+        if (supply / key).exists()
+    }
+for name in ("apss", "aosd", "cxsd", "ddr"):
+    record["soc_sleep"][name] = read("/sys/kernel/debug/qcom_stats/" + name)
+# These cached runtime-PM attributes do not resume the device. They describe
+# the awake endpoints, not the device state during system suspend callbacks.
+for bus, names in {
+    "platform": ("aa00000.video-codec", "a600000.usb", "88e8000.phy",
+                 "1d84000.ufshc", "3d00000.gpu", "3d6a000.gmu",
+                 "ac15000.cci", "ac16000.cci"),
+    "i2c": ("6-0036", "7-0010", "8-0036"),
+}.items():
+    for name in names:
+        device = Path("/sys/bus") / bus / "devices" / name
+        if not device.exists():
+            continue
+        record["runtime"][bus + "/" + name] = {
+            key: read(device / "power" / key)
+            for key in ("control", "runtime_status", "runtime_usage")
+            if (device / "power" / key).exists()
+        }
+for udc in Path("/sys/class/udc").glob("*"):
+    record["usb_gadget"][udc.name] = read(udc / "state")
+print("Y700_SLEEP_STATS " + json.dumps(record, sort_keys=True), flush=True)
+PY
+result=$?
+if [ "$result" -ne 0 ]; then
+    echo "Y700_SLEEP_STATS snapshot incomplete (exit $result)"
+fi
+# Diagnostics never reject a sleep transition.
+exit 0

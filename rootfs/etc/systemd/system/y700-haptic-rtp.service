@@ -1,0 +1,13 @@
+[Unit]
+Description=Lenovo Legion Y700 RTP haptic event player
+Requires=y700-haptic-rtp.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/y700-haptic-rtp
+RuntimeDirectory=y700-haptic-rtp
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=strict

@@ -1,0 +1,6 @@
+[Unit]
+Description=Save device crash dump %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/y700-devcoredump %i

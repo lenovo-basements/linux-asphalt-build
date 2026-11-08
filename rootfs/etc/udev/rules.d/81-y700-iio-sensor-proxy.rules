@@ -1,0 +1,7 @@
+# sensor DSP (SSC). Arch's 80-iio-sensor-proxy.rules only announces light and
+# compass there, so add the accelerometer for iio-sensor-proxy (libssc).
+SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel"
+
+# The SSC reports in the Android frame (upright: +y, right edge up: +x).
+# iio-sensor-proxy wants upright as -y and right edge up as -x, so negate x and y.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp*", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, 1"

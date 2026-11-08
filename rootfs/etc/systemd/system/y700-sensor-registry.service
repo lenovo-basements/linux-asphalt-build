@@ -1,0 +1,10 @@
+[Unit]
+Description=Prepare Y700 writable sensor registry from factory calibration
+After=local-fs.target
+Before=hexagonrpcd-sdsp.service
+RequiresMountsFor=/mnt/persist /var/lib/qcom/sensors
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/y700-sensor-registry-setup
+RemainAfterExit=yes

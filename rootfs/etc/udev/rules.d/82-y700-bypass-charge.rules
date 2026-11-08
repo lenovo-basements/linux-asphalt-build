@@ -1,0 +1,2 @@
+# policy when its service restarts; re-apply the user's bypass choice.
+SUBSYSTEM=="power_supply", KERNEL=="qcom-battmgr-bat", ACTION=="add|change", RUN+="/usr/local/bin/y700-bypass-charge restore"

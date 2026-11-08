@@ -1,0 +1,46 @@
+#!/bin/sh
+# Keep device crash dumps (GPU hangs from msm, ath11k firmware crashes, ...).
+# The kernel drops a devcoredump after 5 minutes unless someone reads it, so a
+# udev rule starts y700-devcoredump@<devcdN>.service for each new one. This
+# copies the dump with some context into STORE, frees the kernel's copy and
+# keeps the newest KEEP dumps. Dumps can contain GPU buffer contents: root only.
+#
+# Usage: y700-devcoredump devcdN
+# DEVCD_ROOT and STORE can be overridden for testing.
+
+set -u
+name=${1:?usage: y700-devcoredump devcdN}
+case "$name" in devcd[0-9]*) ;; *) echo "not a devcoredump name: $name" >&2; exit 2 ;; esac
+src=${DEVCD_ROOT:-/sys/class/devcoredump}/$name
+STORE=${STORE:-/var/lib/y700/devcoredump}
+KEEP=10
+
+[ -r "$src/data" ] || { echo "$src/data is gone" >&2; exit 1; }
+device=$(readlink -f "$src/failing_device" 2>/dev/null)
+driver=$(basename "$(readlink -f "$src/failing_device/driver" 2>/dev/null)" 2>/dev/null)
+out="$STORE/$(date +%Y%m%d-%H%M%S)-${driver:-unknown}-$name"
+
+umask 077
+mkdir -p "$out" || exit 1
+if command -v zstd >/dev/null; then
+    # Through stdout: zstd -o would copy the input's owner and mode.
+    zstd -q -c "$src/data" > "$out/devcoredump.zst"
+else
+    cat "$src/data" > "$out/devcoredump"
+fi
+{
+    echo "time: $(date -Is)"
+    echo "kernel: $(uname -r)"
+    echo "failing device: ${device:-unknown}"
+    echo "driver: ${driver:-unknown}"
+    echo "gpu cur_freq: $(cat /sys/class/devfreq/3d00000.gpu/cur_freq 2>/dev/null)"
+    echo "gpu min/max: $(cat /sys/class/devfreq/3d00000.gpu/min_freq 2>/dev/null)/$(cat /sys/class/devfreq/3d00000.gpu/max_freq 2>/dev/null)"
+    echo "power profile: $(tuned-adm active 2>/dev/null)"
+} > "$out/info.txt"
+journalctl -k -b --since "-5min" --no-pager > "$out/kernel.log" 2>/dev/null
+
+# Writing to data frees the kernel's copy.
+echo 1 > "$src/data" 2>/dev/null
+
+ls -1dt "$STORE"/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -rf
+echo "saved $name ($driver) to $out"

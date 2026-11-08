@@ -1,0 +1,25 @@
+#!/bin/bash
+# Pin wlan0 to this tablet's factory MAC (written to /run, so nothing
+# device-specific is stored in the rootfs image). Runs before NetworkManager.
+set -euo pipefail
+mac="$(/usr/local/bin/y700-device-mac wifi)"
+
+# The interface itself, if the driver has created it already (it is still down
+# before NetworkManager starts).
+if [[ -e /sys/class/net/wlan0 ]]; then
+    ip link set dev wlan0 address "$mac" || echo "could not set wlan0 address" >&2
+fi
+
+# NetworkManager: cloned-mac-address is a connection default, the scan
+# setting a device one; each is ignored in the other kind of section.
+install -d -m 755 /run/NetworkManager/conf.d
+cat > /run/NetworkManager/conf.d/10-y700-mac.conf <<CONF
+[device-y700-mac]
+match-device=interface-name:wlan0
+wifi.scan-rand-mac-address=no
+
+[connection-y700-mac]
+match-device=interface-name:wlan0
+wifi.cloned-mac-address=${mac}
+CONF
+echo "wlan0 MAC: ${mac}"

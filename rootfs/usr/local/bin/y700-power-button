@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Own the power key, including the Power + Volume Down screenshot chord."""
+from pathlib import Path
+import os
+import pwd
+import select
+import signal
+import subprocess
+import sys
+import time
+import evdev
+from evdev import ecodes as e
+
+
+class SleepGuard:
+    """Reject wake presses throughout suspend and the post-resume debounce."""
+    def __init__(self):
+        self.marker = None
+        self.until = 0.0
+
+    def blocked(self, marker, now):
+        if marker != self.marker:
+            self.marker = marker
+            if marker[0] == 'awake':
+                self.until = now + 0.75
+        return marker[0] == 'sleeping' or now < self.until
+
+
+def sleep_marker():
+    try:
+        with open('/run/y700-sleep-state') as marker:
+            return marker.read().strip(), os.fstat(marker.fileno()).st_mtime_ns
+    except OSError:
+        return None, None
+
+
+class PressState:
+    def __init__(self):
+        self.deadline = None
+        self.held = False
+        self.power_down = False
+        self.volume_down = False
+        self.captured = False
+
+    def chord(self):
+        if self.power_down and self.volume_down and not self.captured and not self.held:
+            self.captured = True
+            self.deadline = None
+            return 'screenshot'
+        if not self.power_down and not self.volume_down:
+            self.captured = False
+        return None
+
+    def volume(self, value):
+        if value in (0, 1):
+            self.volume_down = value == 1
+            return self.chord()
+        return None
+
+    def update(self, value, now):
+        if value == 1 and not self.power_down:
+            self.power_down = True
+            if self.captured:
+                return None
+            self.deadline = now + 0.65
+            self.held = False
+            return self.chord()
+        elif value == 0:
+            self.power_down = False
+            if self.captured:
+                self.chord()
+                return None
+            if self.deadline is None:
+                return None
+            was_held = self.held or now >= self.deadline
+            self.deadline = None
+            return 'menu' if was_held and not self.held else None if was_held else 'suspend'
+        return None
+
+    def poll(self, now):
+        if self.deadline is not None and not self.held and now >= self.deadline:
+            self.held = True
+            return 'menu'
+        return None
+
+
+def has_local_compositor(uid, session, hypr_only=False):
+    for directory in Path('/proc').iterdir():
+        if not directory.name.isdigit():
+            continue
+        try:
+            if directory.stat().st_uid != uid:
+                continue
+            names = ('Hyprland',) if hypr_only else ('gnome-shell', 'mutter', 'kwin_wayland', 'kwin_x11', 'Hyprland')
+            if (directory / 'comm').read_text().strip() not in names:
+                continue
+            environment = dict(field.split(b'=', 1) for field in (directory / 'environ').read_bytes().split(b'\0') if b'=' in field)
+            owner_session = environment.get(b'XDG_SESSION_ID', b'').decode()
+            if owner_session and owner_session != session:
+                continue
+            if environment.get(b'XDG_RUNTIME_DIR', b'').decode() == f'/run/user/{uid}':
+                return True
+        except (OSError, UnicodeError):
+            continue
+    return False
+
+
+def active_session(hypr_only=False):
+    result = subprocess.run(['loginctl', 'list-sessions', '--no-legend', '--no-pager'],
+                            check=True, text=True, capture_output=True, timeout=5)
+    for line in result.stdout.splitlines():
+        session = line.split()[0]
+        result = subprocess.run(['loginctl', 'show-session', session, '-p', 'Active', '-p', 'Type', '-p', 'User', '-p', 'Name', '-p', 'Seat', '-p', 'Remote'],
+                                check=True, text=True, capture_output=True, timeout=5)
+        properties = dict(p.split('=', 1) for p in result.stdout.splitlines() if '=' in p)
+        if properties.get('Active') != 'yes' or properties.get('Remote') == 'yes':
+            continue
+        uid = int(properties['User'])
+        if uid == 0:
+            continue
+        graphical = properties.get('Type') in ('wayland', 'x11')
+        tty_desktop = properties.get('Type') == 'tty' and properties.get('Seat') and has_local_compositor(uid, session)
+        if graphical or tty_desktop:
+            if hypr_only and not has_local_compositor(uid, session, hypr_only=True):
+                continue
+            return properties['Name'], uid
+    # Callers catch KeyError: with nobody logged in, skip the action.
+    raise KeyError('no active local graphical session')
+
+
+def drain_device(device):
+    if not device:
+        return
+    while True:
+        ready, _, _ = select.select([device.fd], [], [], 0)
+        if not ready:
+            break
+        try:
+            list(device.read())
+        except OSError:
+            break
+
+
+def screenshot():
+    # The user manager launches outside this service's ProtectHome namespace.
+    # No user-controlled program is executed as root.
+    user, uid = active_session()
+    runtime = f'/run/user/{uid}'
+    helper = str(Path(pwd.getpwnam(user).pw_dir) / '.config/hypr/screenshot-control')
+    subprocess.run(['runuser', '-u', user, '--', 'env',
+        f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
+        'systemd-run', '--user', '--collect', '--unit=y700-button-screenshot',
+        '--property=Type=exec', '/usr/bin/env', helper], check=True, timeout=5)
+
+
+def publish_held(state):
+    marker = Path('/run/y700-power-held')
+    if state.power_down or state.captured:
+        marker.write_text(str(time.monotonic()))
+    else:
+        marker.unlink(missing_ok=True)
+
+
+def action(name):
+    if name == 'screenshot':
+        try:
+            screenshot()
+        except (OSError, KeyError, subprocess.SubprocessError) as error:
+            print(f'power-button screenshot failed: {error}', file=sys.stderr, flush=True)
+        return
+    if name == 'suspend':
+        try:
+            user, uid = active_session(hypr_only=True)
+        except KeyError:
+            pass  # Other desktops retain their existing system suspend path.
+        except (OSError, subprocess.SubprocessError) as error:
+            print(f'power-button session lookup failed: {error}', file=sys.stderr, flush=True)
+            return
+        else:
+            runtime = f'/run/user/{uid}'
+            helper = str(Path(pwd.getpwnam(user).pw_dir) / '.config/hypr/idle-control')
+            try:
+                subprocess.run(['runuser', '-u', user, '--', 'env',
+                    f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
+                    'systemd-run', '--user', '--collect', '--unit=y700-button-sleep',
+                    '--property=Type=exec', '/usr/bin/env', helper, 'button'], check=True, timeout=5)
+            except (OSError, subprocess.SubprocessError) as error:
+                print(f'power-button desktop handoff failed: {error}', file=sys.stderr, flush=True)
+            return
+        # Use the shared logind/systemd path. systemctl may return before
+        # suspend completes, so display restoration belongs to the sleep
+        # hook and the unit ordered after systemd-suspend.service.
+        print('[POWER] Short press -> request suspend', flush=True)
+        try:
+            subprocess.run(['systemctl', '--no-block', 'suspend'], check=True, timeout=5)
+        except (OSError, subprocess.SubprocessError) as err:
+            print(f'power-button suspend failed: {err}', file=sys.stderr, flush=True)
+        return
+
+    try:
+        user, uid = active_session()
+        runtime = f'/run/user/{uid}'
+        subprocess.run([
+            'runuser', '-u', user, '--', 'env',
+            f'XDG_RUNTIME_DIR={runtime}',
+            f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
+            'gnome-session-quit', '--power-off'
+        ], check=False, timeout=5)
+    except Exception as err:
+        print(f'power-button menu error: {err}', file=sys.stderr, flush=True)
+
+
+def main():
+    device = None
+    volume = None
+    try:
+        for path in evdev.list_devices():
+            candidate = evdev.InputDevice(path)
+            keys = candidate.capabilities().get(e.EV_KEY, [])
+            if candidate.name == 'pmic_pwrkey' and e.KEY_POWER in keys:
+                device = candidate
+            elif candidate.name == 'pmic_resin' and e.KEY_VOLUMEDOWN in keys:
+                volume = candidate
+            else:
+                candidate.close()
+        if device is None:
+            raise RuntimeError('PMIC power-key device not found')
+        # Only this dedicated power-key device is grabbed; touch remains shared.
+        device.grab()
+        # Observe Volume Down without grabbing it; normal volume binds stay usable.
+        devices = [device] + ([volume] if volume else [])
+        def drain_all():
+            for source in devices:
+                drain_device(source)
+        publish_held(PressState())
+        state = PressState()
+        sleep_guard = SleepGuard()
+        lockout_until = 0.0
+
+        def sleep_offset():
+            clock = getattr(time, 'CLOCK_BOOTTIME', time.CLOCK_MONOTONIC)
+            return time.clock_gettime(clock) - time.monotonic()
+
+        previous_offset = sleep_offset()
+        while True:
+            ready, _, _ = select.select([source.fd for source in devices], [], [], 0.05)
+            now = time.monotonic()
+            offset = sleep_offset()
+
+            # s2idle can return without a large BOOTTIME/MONOTONIC gap.
+            # The sleep hook marks entry before suspend, so a wake key is
+            # ignored even before the post-resume hook gets CPU time.
+            if sleep_guard.blocked(sleep_marker(), now):
+                state = PressState()
+                publish_held(state)
+                drain_all()
+                previous_offset = offset
+                continue
+
+            # Detect wake from any sleep (power button, lid open, idle timeout)
+            if offset - previous_offset > 0.5:
+                lockout_until = max(lockout_until, now + 2.5)
+                state = PressState()
+                publish_held(state)
+                drain_all()
+                previous_offset = offset
+                continue
+
+            previous_offset = offset
+
+            # During wake-up lockout, discard all power key events so wake presses cannot re-suspend
+            if now < lockout_until:
+                state = PressState()
+                publish_held(state)
+                drain_all()
+                continue
+
+            if ready:
+                events = [(event.timestamp(), source, event) for source in devices
+                          if source.fd in ready for event in source.read()]
+                events.sort(key=lambda item: item[0])
+                for _, source, event in events:
+                    requested = None
+                    if event.type == e.EV_SYN and event.code == e.SYN_DROPPED:
+                        state = PressState()
+                    elif event.type == e.EV_KEY:
+                        if source is device and event.code == e.KEY_POWER:
+                            requested = state.update(event.value, now)
+                        elif source is volume and event.code == e.KEY_VOLUMEDOWN:
+                            requested = state.volume(event.value)
+                    publish_held(state)
+                    if requested:
+                        action(requested)
+                        if requested != 'screenshot':
+                            state = PressState()
+                            publish_held(state)
+                        now = time.monotonic()
+                        previous_offset = sleep_offset()
+                        if requested == 'suspend':
+                            lockout_until = max(lockout_until, now + 2.5)
+                            drain_all()
+
+            requested = state.poll(now)
+            if requested:
+                try:
+                    action(requested)
+                    state = PressState()
+                    publish_held(state)
+                    now = time.monotonic()
+                    previous_offset = sleep_offset()
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    print(f'power-menu: {error}', file=sys.stderr, flush=True)
+    finally:
+        Path('/run/y700-power-held').unlink(missing_ok=True)
+        if volume:
+            volume.close()
+        if device:
+            device.close()  # Releases the grab on exit, including service shutdown.
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f'y700-power-button: {error}', file=sys.stderr)
+        sys.exit(1)

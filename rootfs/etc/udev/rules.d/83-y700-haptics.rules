@@ -1,0 +1,12 @@
+# pulses the AW86927 motors for on-screen keyboard taps. Let the "input" group
+# (which can already read every input device) trigger SRAM effects; raw RTP
+# streaming (rtp, rtp_mode) stays root-only. "add" covers boot: the driver binds
+# before udevd starts, so coldplug only replays "add".
+ACTION=="add|bind", SUBSYSTEM=="i2c", DRIVER=="aw86927-haptics", \
+  RUN+="/bin/sh -c 'cd /sys%p && chgrp input activate duration index level && chmod 0664 activate duration index level'"
+
+# The motors' force-feedback input devices, for feedbackd and games.
+KERNEL=="event*", ATTRS{name}=="aw86927-haptics-*", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_KEY}="0", \
+  ENV{ID_INPUT_FF}="1", ENV{FEEDBACKD_TYPE}="vibra", \
+  TAG+="uaccess", MODE="0660", GROUP="input"

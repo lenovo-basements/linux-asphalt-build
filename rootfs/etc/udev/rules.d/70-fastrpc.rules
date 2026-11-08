@@ -1,0 +1,2 @@
+# Qualcomm FastRPC device node permissions
+SUBSYSTEM=="misc", KERNEL=="fastrpc-*", GROUP="fastrpc", MODE="0660"

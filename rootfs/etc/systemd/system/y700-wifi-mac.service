@@ -1,0 +1,13 @@
+[Unit]
+Description=Lenovo Legion Y700 Wi-Fi MAC address (from bootloader)
+Before=NetworkManager.service
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/y700-wifi-mac
+RemainAfterExit=yes
+
+[Install]
+WantedBy=NetworkManager.service

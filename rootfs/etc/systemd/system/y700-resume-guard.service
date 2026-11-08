@@ -1,0 +1,12 @@
+[Unit]
+Description=Prevent a second suspend while the Y700 desktop resumes
+Before=sleep.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/local/bin/y700-resume-guard
+TimeoutStartSec=3
+
+[Install]
+WantedBy=sleep.target

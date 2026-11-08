@@ -1,0 +1,6 @@
+#!/bin/sh
+if ! command -v chromium >/dev/null 2>&1; then
+    echo 'Install the Arch Linux ARM chromium package to use this launcher.' >&2
+    exit 127
+fi
+exec chromium --enable-features=AcceleratedVideoDecoder "$@"

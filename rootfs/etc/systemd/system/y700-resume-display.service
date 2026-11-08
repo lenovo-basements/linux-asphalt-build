@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore Y700 display after the desktop session has thawed
+After=systemd-suspend.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/y700-wake-display
+ExecStartPost=-/usr/bin/systemctl --no-block stop y700-resume-guard.service
+TimeoutStartSec=10

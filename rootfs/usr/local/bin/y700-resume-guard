@@ -1,0 +1,31 @@
+#!/bin/sh
+# Inhibit GNOME idle/suspend before sleep.target freezes desktop sessions.
+# Other sessions (Hyprland) have no GNOME session manager to inhibit and
+# handle resume themselves, so the guard steps aside for them.
+set -eu
+if [ "${1:-}" = --inhibited ]; then
+    NOTIFY_SOCKET="$Y700_RESUME_NOTIFY_SOCKET" systemd-notify --ready
+    exec sleep 8
+fi
+export Y700_RESUME_NOTIFY_SOCKET="$NOTIFY_SOCKET"
+for bus in /run/user/*/bus; do
+    [ -S "$bus" ] || continue
+    uid=${bus#/run/user/}
+    uid=${uid%/bus}
+    [ "$uid" -ge 1000 ] || continue
+    gid=$(id -g "$uid")
+    if ! setpriv --reuid="$uid" --regid="$gid" --init-groups \
+            env XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+            timeout -k 1 2 gdbus call --session --dest org.freedesktop.DBus \
+            --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner \
+            org.gnome.SessionManager 2>/dev/null | grep -q true; then
+        continue
+    fi
+    exec setpriv --reuid="$uid" --regid="$gid" --init-groups \
+        env XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+        gnome-session-inhibit --app-id=y700-resume-guard \
+        --reason="Restore desktop activity after resume" --inhibit=suspend --inhibit=idle \
+        "$0" --inhibited
+done
+# No GNOME session needs protecting. Notify rather than delay suspend.
+systemd-notify --ready

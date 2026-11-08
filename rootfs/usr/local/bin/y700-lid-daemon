@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+Lenovo Legion Y700 (2023) / TB320FC / asphalt
+Folio Case Hall Sensor Daemon (ROHM BU52053NVX via Qualcomm Sensor Core)
+
+Exposes a virtual Linux input lid switch (SW_LID) so systemd-logind and GNOME Mutter
+manage sleep and wake states natively without delay-lock race conditions.
+Display restoration after suspend is handled by y700-resume-display.service.
+"""
+
+import os
+import sys
+import time
+import subprocess
+import selectors
+import re
+import evdev
+from evdev import ecodes
+
+SUID = "003335303235204CI4C4148204D484F52"
+
+class LidFilter:
+    """Publish opens immediately; require 400 ms of stable closure."""
+    def __init__(self):
+        self.closed = False
+        self.deadline = None
+
+    def observe(self, closed, now):
+        if not closed:
+            self.deadline = None
+            if self.closed:
+                self.closed = False
+                return False
+        elif not self.closed and self.deadline is None:
+            self.deadline = now + 0.4
+        return None
+
+    def ready(self, now):
+        if self.deadline is not None and now >= self.deadline:
+            self.deadline = None
+            self.closed = True
+            return True
+        return None
+
+class Y700LidDaemon:
+    def __init__(self):
+        self.uinput = None
+        self._init_uinput()
+        self.is_closed = False
+
+    def _init_uinput(self):
+        try:
+            self.uinput = evdev.UInput(
+                name="y700-lid-switch",
+                events={
+                    ecodes.EV_SW: [ecodes.SW_LID],
+                    ecodes.EV_KEY: [ecodes.KEY_WAKEUP, ecodes.KEY_POWER]
+                }
+            )
+            print("[LID] Created virtual input device with SW_LID support", flush=True)
+        except Exception as e:
+            raise RuntimeError(f"Could not create lid input device: {e}") from e
+
+    def set_lid_state(self, closed: bool):
+        if self.is_closed == closed:
+            return
+        self.is_closed = closed
+
+        if self.uinput:
+            try:
+                # 1 = closed, 0 = open
+                self.uinput.write(ecodes.EV_SW, ecodes.SW_LID, 1 if closed else 0)
+                self.uinput.write(ecodes.EV_SYN, ecodes.SYN_REPORT, 0)
+            except Exception as e:
+                print(f"[LID] Failed to write SW_LID event: {e}", flush=True)
+
+        if closed:
+            # logind owns suspend through SW_LID. An additional systemctl
+            # request races it and can suspend after the lid reopens.
+            print("[LID] Folio Case CLOSED -> SW_LID=1 (logind handles suspend)", flush=True)
+        else:
+            # The resume service waits until user.slice has thawed before
+            # talking to GNOME; a helper here races that thaw.
+            print("[LID] Folio Case OPENED -> SW_LID=0", flush=True)
+
+    def run(self):
+        print("Starting Y700 Folio Case Hall Sensor Daemon...", flush=True)
+        while True:
+            p = None
+            try:
+                p = subprocess.Popen(
+                    # delivery_type=0 (sensh default) requests wakeup events.
+                    # This sensh build's -w selects 1, i.e. NO_WAKEUP.
+                    ["/usr/local/bin/sensh", "watch", SUID],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=0
+                )
+                state = LidFilter()
+                state.closed = self.is_closed
+                buffer = b""
+                with selectors.DefaultSelector() as selector:
+                    selector.register(p.stdout, selectors.EVENT_READ)
+                    while True:
+                        delay = None if state.deadline is None else max(0, state.deadline - time.monotonic())
+                        events = selector.select(delay)
+                        if events:
+                            data = os.read(p.stdout.fileno(), 65536)
+                            if not data:
+                                raise RuntimeError("sensh stream ended")
+                            buffer += data
+                            while b"\n" in buffer:
+                                raw, buffer = buffer.split(b"\n", 1)
+                                line = raw.decode(errors="replace")
+                                if "received error" in line:
+                                    raise RuntimeError(line)
+                                match = re.search(r"event 770, raw: 080([01])(?:[0-9A-Fa-f]*)$", line.strip())
+                                if match:
+                                    closed = match[1] == "1"
+                                    print(f"[LID] Hall raw closed={int(closed)}", flush=True)
+                                    change = state.observe(closed, time.monotonic())
+                                    if change is not None:
+                                        self.set_lid_state(change)
+                        change = state.ready(time.monotonic())
+                        if change is not None:
+                            self.set_lid_state(change)
+            except Exception as e:
+                print(f"[LID] Stream error: {e}", flush=True)
+            finally:
+                if p is not None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait()
+                    p.stdout.close()
+            time.sleep(1.0)
+
+if __name__ == '__main__':
+    daemon = Y700LidDaemon()
+    daemon.run()

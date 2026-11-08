@@ -1,0 +1,12 @@
+[Unit]
+Description=Lenovo Legion Y700 (2023) Touchscreen Long-Press Right-Click Daemon
+After=systemd-udev-settle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/y700-touch-rightclick
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

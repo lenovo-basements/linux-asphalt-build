@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+for i in $(seq 1 20); do
+    if [[ -d /sys/class/bluetooth/hci0 ]]; then
+        break
+    fi
+    sleep 0.5
+done
+
+if [[ ! -d /sys/class/bluetooth/hci0 ]]; then
+    echo "hci0 not found, exiting"
+    exit 0
+fi
+
+BT_MAC="$(/usr/local/bin/y700-device-mac bt)"
+
+echo "Setting Bluetooth address to $BT_MAC"
+rfkill unblock bluetooth || true
+btmgmt --index 0 public-addr "$BT_MAC" || true
+sleep 0.5
+btmgmt --index 0 power on || true
+sleep 0.5
+btmgmt --index 0 connectable on || true
+btmgmt --index 0 bondable on || true
+btmgmt --index 0 pairable on 2>/dev/null || true

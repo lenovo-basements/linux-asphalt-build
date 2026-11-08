@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Pause rotation and light subscriptions around sleep; preserve manual stops."""
+import os
+from pathlib import Path
+import pwd
+import subprocess
+import sys
+
+UNIT = 'y700-orientation.service'
+PROXY_UNIT = 'iio-sensor-proxy.service'
+STATE = Path('/run/y700-suspend-sensors')
+
+
+def user_command(uid, *args):
+    account = pwd.getpwuid(uid)
+    runtime = f'/run/user/{uid}'
+    return subprocess.run([
+        'setpriv', f'--reuid={uid}', f'--regid={account.pw_gid}', '--init-groups',
+        'env', f'XDG_RUNTIME_DIR={runtime}',
+        f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
+        'systemctl', '--user', *args, UNIT,
+    ], timeout=5, check=False)
+
+
+def system_command(*args):
+    return subprocess.run(['systemctl', *args, PROXY_UNIT], timeout=5, check=False)
+
+
+def pause(state=STATE, runtimes=Path('/run/user'), command=user_command):
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # The proxy's unit condition prevents desktop/udev activation while paused.
+    (state / '.proxy-block').touch(mode=0o600)
+    if system_command('is-active', '--quiet').returncode == 0:
+        (state / '.proxy-active').touch(mode=0o600)
+    if system_command('stop').returncode:
+        raise RuntimeError('Failed to stop ambient-light proxy')
+    print('[SENSORS] Paused ambient-light proxy; activation blocked', flush=True)
+    for runtime in sorted(runtimes.iterdir()):
+        if not runtime.name.isdigit() or int(runtime.name) < 1000:
+            continue
+        uid = int(runtime.name)
+        if not (runtime / 'bus').is_socket():
+            continue
+        if command(uid, 'is-active', '--quiet').returncode != 0:
+            continue
+        # Record first so cleanup can restore a partially failed stop.
+        (state / str(uid)).touch(mode=0o600)
+        result = command(uid, 'stop')
+        if result.returncode:
+            raise RuntimeError(f'Failed to stop rotation for UID {uid}')
+        print(f'[SENSORS] Paused rotation for UID {uid}', flush=True)
+
+
+def resume(state=STATE, runtimes=Path('/run/user'), command=user_command):
+    if not state.exists():
+        return
+    failed = []
+    (state / '.proxy-block').unlink(missing_ok=True)
+    proxy_marker = state / '.proxy-active'
+    if proxy_marker.exists():
+        try:
+            if system_command('start').returncode:
+                raise RuntimeError('Failed to restore ambient-light proxy')
+            proxy_marker.unlink()
+            print('[SENSORS] Restored ambient-light proxy', flush=True)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            failed.append(str(error))
+    for marker in sorted(state.iterdir()):
+        if not marker.name.isdigit():
+            continue
+        uid = int(marker.name)
+        if not (runtimes / marker.name / 'bus').is_socket():
+            marker.unlink()  # The session ended; do not start a new one.
+            continue
+        try:
+            if command(uid, 'start').returncode:
+                raise RuntimeError(f'Failed to restore rotation for UID {uid}')
+            marker.unlink()
+            print(f'[SENSORS] Restored rotation for UID {uid}', flush=True)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            failed.append(str(error))
+    if failed:
+        raise RuntimeError('; '.join(failed))
+
+
+if __name__ == '__main__':
+    if os.geteuid() != 0 or sys.argv[1:] not in (['pause'], ['resume']):
+        sys.exit('Usage (as root): y700-suspend-sensors pause|resume')
+    try:
+        {'pause': pause, 'resume': resume}[sys.argv[1]]()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        sys.exit(f'y700-suspend-sensors: {error}')

@@ -1,0 +1,11 @@
+[Unit]
+Description=Lenovo Legion Y700 RTP haptic event socket
+
+[Socket]
+ListenDatagram=/run/y700-haptic-rtp.sock
+SocketUser=root
+SocketGroup=input
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target

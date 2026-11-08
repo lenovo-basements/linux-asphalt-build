@@ -1,0 +1,34 @@
+#!/bin/bash
+# Keep Qualcomm's writable registry off the tablet's factory calibration copy.
+set -euo pipefail
+state=/var/lib/qcom/sensors
+factory=/mnt/persist/sensors/registry
+install -d -m 755 "$state" /usr/share/qcom/sensors
+if [[ ! -d "$state/registry" ]]; then
+    if ! mountpoint -q /mnt/persist || [[ ! -f "$factory/registry/sns_reg_config" ]]; then
+        echo "Mount the tablet's original persist partition at /mnt/persist before initializing sensors." >&2
+        exit 1
+    fi
+    staging=$(mktemp -d "$state/.registry.XXXXXX")
+    trap 'rm -rf -- "$staging"' EXIT
+    cp -a "$factory/registry/." "$staging/"
+    chown -R fastrpc:fastrpc "$staging"
+    mv "$staging" "$state/registry"
+    trap - EXIT
+fi
+if [[ ! -e "$state/sns_reg_version" && -f "$factory/sns_reg_version" ]]; then
+    install -o fastrpc -g fastrpc -m 644 "$factory/sns_reg_version" "$state/sns_reg_version"
+fi
+
+# FastRPC's rename callback uses the Android path directly, bypassing its
+# virtual filesystem mapping. Both paths must reach the same writable copy.
+install -d -m 755 /mnt/vendor/persist/sensors
+install -d -o fastrpc -g fastrpc -m 755 /mnt/vendor/persist/sensors/registry
+for link in /usr/share/qcom/sensors/registry /mnt/vendor/persist/sensors/registry/registry; do
+    if [[ -e "$link" && ! -L "$link" ]]; then
+        echo "Refusing to replace existing sensor registry directory: $link" >&2
+        exit 1
+    fi
+    ln -sfnT "$state/registry" "$link"
+done
+ln -sfnT "$state/sns_reg_version" /usr/share/qcom/sensors/sns_reg_version

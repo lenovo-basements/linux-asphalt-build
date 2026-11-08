@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+/dts-v1/;
+/plugin/;
+
+&{/} {
+	compatible = "lenovo,tb320fc", "qcom,sm8475", "qcom,sm8450",
+		     "qcom,cape-mtp", "qcom,cape", "qcom,mtp";
+	qcom,msm-id = <0x213 0x10000>;
+	qcom,board-id = <0x10008 0>;
+	/* ABL accepts either "ROW" or "PRC" */
+	region_country = "ROW";
+};

@@ -1,0 +1,40 @@
+#!/bin/bash
+# Print this tablet's Wi-Fi or Bluetooth MAC address: y700-device-mac wifi|bt
+#
+# 1. The bootloader (ABL) appends the factory Wi-Fi address to the kernel
+#    command line as qca_cld3_qca6490.wifiaddr=XX:XX:XX:XX:XX:XX.
+# 2. Otherwise use the current wlan0 address.
+# 3. Otherwise derive a stable, locally administered address from machine-id.
+# Bluetooth is the Wi-Fi address + 1 in the last byte, as on the stock OS.
+set -euo pipefail
+
+kind="${1:-wifi}"
+mac=""
+
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        *.wifiaddr=*|wifiaddr=*) mac="${arg#*wifiaddr=}" ;;
+    esac
+done
+
+valid() { [[ "$1" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] && [[ "$1" != "00:00:00:00:00:00" ]]; }
+
+if ! valid "$mac"; then
+    mac="$(cat /sys/class/net/wlan0/address 2>/dev/null || true)"
+fi
+if ! valid "$mac" && [[ -r /etc/machine-id ]]; then
+    h="$(sha256sum /etc/machine-id | cut -c1-10)"
+    # 0x02: locally administered, unicast; cannot collide with a vendor OUI.
+    mac="$(printf '02:%s:%s:%s:%s:%s' "${h:0:2}" "${h:2:2}" "${h:4:2}" "${h:6:2}" "${h:8:2}")"
+fi
+valid "$mac" || { echo "no usable MAC address" >&2; exit 1; }
+
+mac="$(printf %s "$mac" | tr a-f A-F)"
+case "$kind" in
+    wifi) echo "$mac" ;;
+    bt)
+        last=$(( (16#${mac##*:} + 1) % 256 ))
+        printf '%s:%02X\n' "${mac%:*}" "$last"
+        ;;
+    *) echo "usage: $0 wifi|bt" >&2; exit 2 ;;
+esac

@@ -1,0 +1,3 @@
+# save every device crash dump before the kernel drops it (5 minutes). The copy runs as a service, outside udev's time
+# limit and sandbox.
+ACTION=="add", SUBSYSTEM=="devcoredump", TAG+="systemd", ENV{SYSTEMD_WANTS}+="y700-devcoredump@%k.service"

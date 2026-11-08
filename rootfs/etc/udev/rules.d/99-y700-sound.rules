@@ -1,0 +1,4 @@
+# ALSA Sound Card Permissions and Priority
+
+SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{id}=="LenovoTB320FC", \
+  TAG+="uaccess", MODE="0660", GROUP="audio"

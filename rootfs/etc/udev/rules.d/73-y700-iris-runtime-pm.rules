@@ -1,0 +1,3 @@
+# Forcing this device on keeps video domains/bandwidth votes active and can
+# prevent deeper SoC sleep.
+ACTION=="add|bind|change", SUBSYSTEM=="platform", KERNEL=="aa00000.video-codec", DRIVER=="qcom-iris", ATTR{power/control}="auto"

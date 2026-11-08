@@ -1,0 +1,10 @@
+{
+  "name": "Y700 Controls & Haptics",
+  "description": "Quick Settings toggles (Auto Brightness via GNOME ambient light, Bypass Charging) and spatial OSK haptics for Lenovo Legion Y700 (2023). Auto Rotate is GNOME's own toggle.",
+  "uuid": "y700-haptics@lenovo.local",
+  "shell-version": [
+    "51",
+    "51.0",
+    "51.1"
+  ]
+}

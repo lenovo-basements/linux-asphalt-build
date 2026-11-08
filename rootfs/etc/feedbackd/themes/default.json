@@ -1,0 +1,82 @@
+{
+  "name": "default",
+  "profiles": {
+    "full": [
+      {
+        "event-name": "button-pressed",
+        "type": "VibraRumble",
+        "duration": 30,
+        "magnitude": 0.5
+      },
+      {
+        "event-name": "button-released",
+        "type": "VibraRumble",
+        "duration": 15,
+        "magnitude": 0.3
+      },
+      {
+        "event-name": "keypad-key-press",
+        "type": "VibraRumble",
+        "duration": 25,
+        "magnitude": 0.4
+      },
+      {
+        "event-name": "window-close",
+        "type": "VibraRumble",
+        "duration": 40,
+        "magnitude": 0.6
+      },
+      {
+        "event-name": "message-new-instant",
+        "type": "VibraPattern",
+        "durations": [60, 40, 60],
+        "magnitudes": [0.7, 0.0, 0.7]
+      },
+      {
+        "event-name": "phone-incoming-call",
+        "type": "VibraPattern",
+        "durations": [300, 200, 300, 200, 300],
+        "magnitudes": [0.9, 0.0, 0.9, 0.0, 0.9]
+      },
+      {
+        "event-name": "alarm-clock-elapsed",
+        "type": "VibraPattern",
+        "durations": [500, 250, 500],
+        "magnitudes": [1.0, 0.0, 1.0]
+      },
+      {
+        "event-name": "bell-terminal",
+        "type": "VibraRumble",
+        "duration": 50,
+        "magnitude": 0.7
+      }
+    ],
+    "quiet": [
+      {
+        "event-name": "button-pressed",
+        "type": "VibraRumble",
+        "duration": 20,
+        "magnitude": 0.3
+      },
+      {
+        "event-name": "keypad-key-press",
+        "type": "VibraRumble",
+        "duration": 15,
+        "magnitude": 0.25
+      },
+      {
+        "event-name": "message-new-instant",
+        "type": "VibraPattern",
+        "durations": [40, 30, 40],
+        "magnitudes": [0.5, 0.0, 0.5]
+      },
+      {
+        "event-name": "phone-incoming-call",
+        "type": "VibraPattern",
+        "durations": [200, 150, 200],
+        "magnitudes": [0.7, 0.0, 0.7]
+      }
+    ],
+    "silent": []
+  }
+}

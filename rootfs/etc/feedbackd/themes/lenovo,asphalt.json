@@ -1,0 +1,560 @@
+{
+  "name": "lenovo,asphalt",
+  "parent-name": "default",
+  "profiles": [
+    {
+      "name": "full",
+      "feedbacks": [
+        {
+          "event-name": "button-pressed",
+          "type": "VibraRumble",
+          "duration": 25,
+          "magnitude": 0.45
+        },
+        {
+          "event-name": "button-released",
+          "type": "VibraRumble",
+          "duration": 12,
+          "magnitude": 0.25
+        },
+        {
+          "event-name": "keypad-key-press",
+          "type": "VibraRumble",
+          "duration": 18,
+          "magnitude": 0.35
+        },
+        {
+          "event-name": "key-pressed",
+          "type": "VibraRumble",
+          "duration": 18,
+          "magnitude": 0.35
+        },
+        {
+          "event-name": "key-released",
+          "type": "VibraRumble",
+          "duration": 12,
+          "magnitude": 0.2
+        },
+        {
+          "event-name": "window-close",
+          "type": "VibraPattern",
+          "durations": [
+            20,
+            20,
+            35
+          ],
+          "magnitudes": [
+            0.4,
+            0.0,
+            0.6
+          ]
+        },
+        {
+          "event-name": "camera-focus",
+          "type": "VibraPattern",
+          "durations": [
+            15,
+            20,
+            15
+          ],
+          "magnitudes": [
+            0.35,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "event-name": "camera-shutter",
+          "type": "VibraPattern",
+          "durations": [
+            20,
+            15,
+            35
+          ],
+          "magnitudes": [
+            0.5,
+            0.0,
+            0.85
+          ]
+        },
+        {
+          "event-name": "screen-capture",
+          "type": "VibraPattern",
+          "durations": [
+            25,
+            25,
+            30
+          ],
+          "magnitudes": [
+            0.45,
+            0.0,
+            0.7
+          ]
+        },
+        {
+          "event-name": "desktop-screen-lock",
+          "type": "VibraPattern",
+          "durations": [
+            20,
+            25,
+            30
+          ],
+          "magnitudes": [
+            0.4,
+            0.0,
+            0.65
+          ]
+        },
+        {
+          "event-name": "desktop-screen-unlock",
+          "type": "VibraRumble",
+          "duration": 22,
+          "magnitude": 0.45
+        },
+        {
+          "event-name": "power-plug",
+          "type": "VibraPattern",
+          "durations": [
+            25,
+            30,
+            45
+          ],
+          "magnitudes": [
+            0.35,
+            0.0,
+            0.7
+          ]
+        },
+        {
+          "event-name": "power-unplug",
+          "type": "VibraPattern",
+          "durations": [
+            35,
+            25,
+            15
+          ],
+          "magnitudes": [
+            0.5,
+            0.0,
+            0.25
+          ]
+        },
+        {
+          "event-name": "message-new-instant",
+          "type": "VibraPattern",
+          "durations": [
+            50,
+            35,
+            50
+          ],
+          "magnitudes": [
+            0.65,
+            0.0,
+            0.75
+          ]
+        },
+        {
+          "event-name": "message-sent-instant",
+          "type": "VibraRumble",
+          "duration": 20,
+          "magnitude": 0.4
+        },
+        {
+          "event-name": "message-new-sms",
+          "type": "VibraPattern",
+          "durations": [
+            60,
+            40,
+            60
+          ],
+          "magnitudes": [
+            0.7,
+            0.0,
+            0.75
+          ]
+        },
+        {
+          "event-name": "message-new-email",
+          "type": "VibraPattern",
+          "durations": [
+            70,
+            50,
+            40
+          ],
+          "magnitudes": [
+            0.6,
+            0.0,
+            0.4
+          ]
+        },
+        {
+          "event-name": "notification-new-generic",
+          "type": "VibraPattern",
+          "durations": [
+            40,
+            30,
+            40
+          ],
+          "magnitudes": [
+            0.55,
+            0.0,
+            0.65
+          ]
+        },
+        {
+          "event-name": "message-missed-notification",
+          "type": "VibraPattern",
+          "durations": [
+            30,
+            50,
+            30
+          ],
+          "magnitudes": [
+            0.4,
+            0.0,
+            0.4
+          ]
+        },
+        {
+          "event-name": "battery-caution",
+          "type": "VibraPattern",
+          "durations": [
+            80,
+            50,
+            80
+          ],
+          "magnitudes": [
+            0.65,
+            0.0,
+            0.65
+          ]
+        },
+        {
+          "event-name": "battery-low",
+          "type": "VibraPattern",
+          "durations": [
+            100,
+            60,
+            100,
+            60,
+            120
+          ],
+          "magnitudes": [
+            0.85,
+            0.0,
+            0.85,
+            0.0,
+            0.9
+          ]
+        },
+        {
+          "event-name": "phone-incoming-call",
+          "type": "VibraPattern",
+          "durations": [
+            250,
+            150,
+            250,
+            150,
+            350
+          ],
+          "magnitudes": [
+            0.85,
+            0.0,
+            0.85,
+            0.0,
+            0.95
+          ]
+        },
+        {
+          "event-name": "phone-hangup",
+          "type": "VibraPattern",
+          "durations": [
+            40,
+            30,
+            25
+          ],
+          "magnitudes": [
+            0.6,
+            0.0,
+            0.3
+          ]
+        },
+        {
+          "event-name": "phone-failure",
+          "type": "VibraPattern",
+          "durations": [
+            100,
+            60,
+            100
+          ],
+          "magnitudes": [
+            0.8,
+            0.0,
+            0.8
+          ]
+        },
+        {
+          "event-name": "phone-outgoing-busy",
+          "type": "VibraPattern",
+          "durations": [
+            150,
+            100,
+            150
+          ],
+          "magnitudes": [
+            0.6,
+            0.0,
+            0.6
+          ]
+        },
+        {
+          "event-name": "alarm-clock-elapsed",
+          "type": "VibraPattern",
+          "durations": [
+            400,
+            200,
+            400
+          ],
+          "magnitudes": [
+            1.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "event-name": "timeout-completed",
+          "type": "VibraPattern",
+          "durations": [
+            120,
+            80,
+            120
+          ],
+          "magnitudes": [
+            0.75,
+            0.0,
+            0.85
+          ]
+        },
+        {
+          "event-name": "bell-terminal",
+          "type": "VibraRumble",
+          "duration": 40,
+          "magnitude": 0.6
+        },
+        {
+          "event-name": "theme-demo",
+          "type": "VibraPattern",
+          "durations": [
+            30,
+            25,
+            40,
+            25,
+            60
+          ],
+          "magnitudes": [
+            0.4,
+            0.0,
+            0.6,
+            0.0,
+            0.9
+          ]
+        }
+      ]
+    },
+    {
+      "name": "quiet",
+      "feedbacks": [
+        {
+          "event-name": "button-pressed",
+          "type": "VibraRumble",
+          "duration": 15,
+          "magnitude": 0.25
+        },
+        {
+          "event-name": "button-released",
+          "type": "VibraRumble",
+          "duration": 8,
+          "magnitude": 0.15
+        },
+        {
+          "event-name": "keypad-key-press",
+          "type": "VibraRumble",
+          "duration": 12,
+          "magnitude": 0.2
+        },
+        {
+          "event-name": "key-pressed",
+          "type": "VibraRumble",
+          "duration": 12,
+          "magnitude": 0.2
+        },
+        {
+          "event-name": "window-close",
+          "type": "VibraRumble",
+          "duration": 18,
+          "magnitude": 0.3
+        },
+        {
+          "event-name": "camera-focus",
+          "type": "VibraPattern",
+          "durations": [
+            10,
+            15,
+            10
+          ],
+          "magnitudes": [
+            0.2,
+            0.0,
+            0.25
+          ]
+        },
+        {
+          "event-name": "camera-shutter",
+          "type": "VibraPattern",
+          "durations": [
+            15,
+            15,
+            20
+          ],
+          "magnitudes": [
+            0.35,
+            0.0,
+            0.45
+          ]
+        },
+        {
+          "event-name": "screen-capture",
+          "type": "VibraRumble",
+          "duration": 20,
+          "magnitude": 0.35
+        },
+        {
+          "event-name": "desktop-screen-lock",
+          "type": "VibraRumble",
+          "duration": 18,
+          "magnitude": 0.3
+        },
+        {
+          "event-name": "desktop-screen-unlock",
+          "type": "VibraRumble",
+          "duration": 14,
+          "magnitude": 0.25
+        },
+        {
+          "event-name": "power-plug",
+          "type": "VibraPattern",
+          "durations": [
+            15,
+            20,
+            25
+          ],
+          "magnitudes": [
+            0.2,
+            0.0,
+            0.35
+          ]
+        },
+        {
+          "event-name": "power-unplug",
+          "type": "VibraRumble",
+          "duration": 20,
+          "magnitude": 0.25
+        },
+        {
+          "event-name": "message-new-instant",
+          "type": "VibraPattern",
+          "durations": [
+            35,
+            25,
+            35
+          ],
+          "magnitudes": [
+            0.4,
+            0.0,
+            0.45
+          ]
+        },
+        {
+          "event-name": "message-sent-instant",
+          "type": "VibraRumble",
+          "duration": 12,
+          "magnitude": 0.2
+        },
+        {
+          "event-name": "message-new-sms",
+          "type": "VibraPattern",
+          "durations": [
+            40,
+            25,
+            40
+          ],
+          "magnitudes": [
+            0.45,
+            0.0,
+            0.5
+          ]
+        },
+        {
+          "event-name": "notification-new-generic",
+          "type": "VibraPattern",
+          "durations": [
+            25,
+            20,
+            25
+          ],
+          "magnitudes": [
+            0.35,
+            0.0,
+            0.4
+          ]
+        },
+        {
+          "event-name": "phone-incoming-call",
+          "type": "VibraPattern",
+          "durations": [
+            180,
+            120,
+            180
+          ],
+          "magnitudes": [
+            0.6,
+            0.0,
+            0.6
+          ]
+        },
+        {
+          "event-name": "alarm-clock-elapsed",
+          "type": "VibraPattern",
+          "durations": [
+            300,
+            180,
+            300
+          ],
+          "magnitudes": [
+            0.75,
+            0.0,
+            0.75
+          ]
+        },
+        {
+          "event-name": "timeout-completed",
+          "type": "VibraPattern",
+          "durations": [
+            80,
+            50,
+            80
+          ],
+          "magnitudes": [
+            0.5,
+            0.0,
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "name": "silent",
+      "feedbacks": []
+    }
+  ]
+}

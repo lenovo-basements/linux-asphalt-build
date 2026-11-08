@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Chromium (Iris)
+Comment=Browse with the Y700 Iris hardware video decoder
+Exec=/usr/local/bin/y700-chromium %U
+TryExec=chromium
+Icon=chromium
+Terminal=false
+Categories=Network;WebBrowser;
+StartupNotify=true

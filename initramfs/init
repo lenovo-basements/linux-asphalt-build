@@ -1,0 +1,77 @@
+#!/bin/sh
+# Lenovo Legion Y700 (2023) / TB320FC / asphalt
+# Production Early Userspace Init (PID 1)
+
+bb=/bin/busybox
+export PATH=/bin:/sbin
+
+"$bb" --install -s /bin >/dev/null 2>&1
+"$bb" mount -t devtmpfs devtmpfs /dev
+"$bb" mount -t proc proc /proc
+"$bb" mount -t sysfs sysfs /sys
+"$bb" mount -t tmpfs tmpfs /run
+
+ROOT_UUID="bf4669ee-f176-4895-b3a6-75b37f22c9ce"
+rootdev=""
+
+# Parse cmdline for root= parameter if specified
+for param in $("$bb" cat /proc/cmdline); do
+    case "$param" in
+        root=UUID=*)
+            ROOT_UUID="${param#root=UUID=}"
+            ;;
+        root=*)
+            candidate="${param#root=}"
+            if [ -b "$candidate" ]; then
+                rootdev="$candidate"
+            fi
+            ;;
+    esac
+done
+
+# Wait for root partition
+attempt=0
+while [ "$attempt" -lt 15 ]; do
+    if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
+        break
+    fi
+    # Check UFS internal storage first, then fallback to external microSD
+    for dev in /dev/sda16 /dev/sd* /dev/mmcblk*p* /dev/nvme*n*p*; do
+        [ -b "$dev" ] || continue
+        if "$bb" blkid "$dev" 2>/dev/null | "$bb" grep -q "$ROOT_UUID"; then
+            rootdev="$dev"
+            break 2
+        fi
+    done
+    "$bb" sleep 1
+    attempt=$((attempt + 1))
+done
+
+if [ ! -b "$rootdev" ]; then
+    echo "Root filesystem ($ROOT_UUID) not found. Rebooting in 10s..."
+    "$bb" sleep 10
+    "$bb" reboot -f
+    exit 1
+fi
+
+# Ensure block device is writable
+"$bb" blockdev --setrw "$rootdev" 2>/dev/null || true
+
+# Mount target rootfs
+"$bb" mkdir -p /newroot
+if ! "$bb" mount -t ext4 -o rw,noatime "$rootdev" /newroot; then
+    echo "Failed to mount rootfs on $rootdev. Rebooting in 10s..."
+    "$bb" sleep 10
+    "$bb" reboot -f
+    exit 1
+fi
+
+init_bin=/usr/lib/systemd/systemd
+[ -x /newroot"$init_bin" ] || init_bin=/sbin/init
+
+for fs in dev proc sys run; do
+    "$bb" mount --move "/$fs" "/newroot/$fs"
+done
+
+cd /newroot
+exec "$bb" switch_root /newroot "$init_bin"

@@ -1,0 +1,21 @@
+[Unit]
+Description=TB320FC custom power-button policy
+After=systemd-logind.service systemd-udevd.service
+StartLimitIntervalSec=90
+StartLimitBurst=6
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/y700-power-button
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+NoNewPrivileges=yes
+ProtectHome=tmpfs
+# Permit IPC to the user manager; user homes remain inaccessible.
+BindReadOnlyPaths=/run/user
+ProtectSystem=strict
+ReadWritePaths=/sys /run
+
+[Install]
+WantedBy=multi-user.target

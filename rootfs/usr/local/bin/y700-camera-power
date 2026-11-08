@@ -1,0 +1,45 @@
+#!/bin/bash
+# Register values follow Lenovo cam_power_dev.c. No forced access to bound I2C
+# devices: a future regulator driver must own the PMIC instead of this helper.
+set -euo pipefail
+
+for tool in i2cset i2cget readlink; do
+    command -v "$tool" >/dev/null || {
+        echo "[y700-camera-power] Missing required tool: $tool" >&2
+        exit 1
+    }
+done
+
+buses=()
+for adapter in /sys/bus/i2c/devices/i2c-*; do
+    node=$(readlink -f "$adapter/of_node") || continue
+    case "$node" in
+        */cci@ac16000/i2c-bus@0) buses+=("${adapter##*/i2c-}") ;;
+    esac
+done
+if [[ ${#buses[@]} != 1 ]]; then
+    echo "[y700-camera-power] Expected exactly one camera PMIC bus; found ${#buses[@]}" >&2
+    exit 1
+fi
+bus=${buses[0]}
+if [[ -L /sys/bus/i2c/devices/$bus-0029/driver ]]; then
+    echo "[y700-camera-power] PMIC already owned by a kernel driver; refusing raw writes" >&2
+    exit 1
+fi
+
+echo "[y700-camera-power] Initializing camera rails on i2c-$bus..."
+# Stop immediately on a failed transaction; never report partial setup as success.
+i2cset -y "$bus" 0x29 0x01 0x2f
+i2cset -y "$bus" 0x29 0x03 0x28
+i2cset -y "$bus" 0x29 0x04 0x30
+i2cset -y "$bus" 0x29 0x05 0x80
+i2cset -y "$bus" 0x29 0x06 0x80
+i2cset -y "$bus" 0x29 0x07 0x80
+i2cset -y "$bus" 0x29 0x08 0x80
+i2cset -y "$bus" 0x29 0x0e 0x3f
+value=$(i2cget -y "$bus" 0x29 0x0e)
+if (( value != 0x3f )); then
+    echo "[y700-camera-power] Rail enable readback mismatch: $value" >&2
+    exit 1
+fi
+echo "[y700-camera-power] Camera rail enable readback verified."

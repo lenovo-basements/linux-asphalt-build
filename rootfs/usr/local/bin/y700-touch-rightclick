@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""
+Lenovo Legion Y700 (2023) / TB320FC / asphalt
+Touchscreen Two-Finger Tap to Right-Click Daemon
+Monitors multitouch events from Novatek NT36523N and synthesizes mouse right-clicks with stereo haptics.
+"""
+from pathlib import Path
+import os
+import select
+import signal
+import sys
+import time
+import evdev
+from evdev import ecodes as e
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib/asphalt'))
+try:
+    import haptics
+except ImportError:
+    haptics = None
+
+TOUCH_NAME = "Novatek NT36523N Touchscreen"
+TWO_FINGER_MAX_DURATION = 0.38  # 380ms tap window
+FUZZ_PIXELS = 60                # movement threshold
+
+
+def find_touch_device():
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+            if TOUCH_NAME in dev.name:
+                return dev
+        except Exception:
+            continue
+    return None
+
+
+def init_uinput():
+    if not os.path.exists('/dev/uinput'):
+        return None
+    capabilities = {
+        e.EV_KEY: [e.BTN_LEFT, e.BTN_RIGHT, e.BTN_MIDDLE],
+        e.EV_REL: [e.REL_X, e.REL_Y],
+    }
+    return evdev.UInput(capabilities, name="y700-touch-mouse", version=0x1)
+
+
+def trigger_click(mouse):
+    if haptics:
+        try:
+            motors = haptics.devices()
+            if motors:
+                haptics.click(list(motors.values()), level=240)
+        except Exception:
+            pass
+
+    mouse.write(e.EV_KEY, e.BTN_RIGHT, 1)
+    mouse.syn()
+    time.sleep(0.025)
+    mouse.write(e.EV_KEY, e.BTN_RIGHT, 0)
+    mouse.syn()
+
+
+def main():
+    while True:
+        touch = find_touch_device()
+        if touch:
+            break
+        time.sleep(1)
+
+    while True:
+        mouse = init_uinput()
+        if mouse:
+            break
+        time.sleep(2)
+
+    # Multi-touch tracking state
+    slots = {}
+    current_slot = 0
+    two_finger_detected = False
+    two_finger_start_time = 0.0
+
+    while True:
+        ready, _, _ = select.select([touch.fd], [], [], 0.05)
+        if not ready:
+            continue
+
+        try:
+            for event in touch.read():
+                if event.type == e.EV_ABS:
+                    if event.code == e.ABS_MT_SLOT:
+                        current_slot = event.value
+                        if current_slot not in slots:
+                            slots[current_slot] = {'down': False, 'start_x': None, 'start_y': None, 'x': None, 'y': None}
+
+                    elif event.code == e.ABS_MT_TRACKING_ID:
+                        if current_slot not in slots:
+                            slots[current_slot] = {'down': False, 'start_x': None, 'start_y': None, 'x': None, 'y': None}
+                        if event.value != -1:
+                            # Contact down
+                            slots[current_slot]['down'] = True
+                            slots[current_slot]['start_x'] = None
+                            slots[current_slot]['start_y'] = None
+
+                            active_slots = [s for s, data in slots.items() if data['down']]
+                            if len(active_slots) == 2 and not two_finger_detected:
+                                two_finger_detected = True
+                                two_finger_start_time = time.monotonic()
+                            elif len(active_slots) > 2:
+                                two_finger_detected = False
+                        else:
+                            # Contact lifted
+                            if slots[current_slot]['down'] and two_finger_detected:
+                                active_slots = [s for s, data in slots.items() if data['down']]
+                                duration = time.monotonic() - two_finger_start_time
+                                if len(active_slots) == 2 and duration <= TWO_FINGER_MAX_DURATION:
+                                    dragged = False
+                                    for s in active_slots:
+                                        d = slots[s]
+                                        if d['start_x'] is not None and d['x'] is not None:
+                                            if abs(d['x'] - d['start_x']) > FUZZ_PIXELS or abs(d['y'] - d['start_y']) > FUZZ_PIXELS:
+                                                dragged = True
+                                                break
+                                    if not dragged:
+                                        trigger_click(mouse)
+                                two_finger_detected = False
+
+                            slots[current_slot]['down'] = False
+
+                    elif event.code == e.ABS_MT_POSITION_X:
+                        if current_slot in slots:
+                            slots[current_slot]['x'] = event.value
+                            if slots[current_slot]['start_x'] is None:
+                                slots[current_slot]['start_x'] = event.value
+
+                    elif event.code == e.ABS_MT_POSITION_Y:
+                        if current_slot in slots:
+                            slots[current_slot]['y'] = event.value
+                            if slots[current_slot]['start_y'] is None:
+                                slots[current_slot]['start_y'] = event.value
+
+                elif event.type == e.EV_KEY and event.code == e.BTN_TOUCH:
+                    if event.value == 0:
+                        for s in slots.values():
+                            s['down'] = False
+                        two_finger_detected = False
+
+        except OSError:
+            break
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        main()
+    except Exception as err:
+        print(f"y700-touch-rightclick: {err}", file=sys.stderr)
+        sys.exit(1)

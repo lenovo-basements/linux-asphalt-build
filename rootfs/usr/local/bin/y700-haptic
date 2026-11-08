@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""
+Lenovo Legion Y700 (2023) / TB320FC / asphalt
+Stereo AW86927 Haptics Controller
+Supports:
+  - Dynamic I2C bus detection via of_node/label ('left' and 'right')
+  - Built-in SRAM waveforms 1..33
+  - Streaming RTP waveforms (138 effects from /lib/firmware/awinic/)
+  - Stereo playback, channel panning, and test sequence
+"""
+
+import sys
+import os
+import time
+import glob
+import threading
+
+def find_devices():
+    left, right = None, None
+    for d in glob.glob('/sys/bus/i2c/devices/*-005*'):
+        lbl_file = f'{d}/of_node/label'
+        if os.path.exists(lbl_file):
+            try:
+                lbl = open(lbl_file).read().strip().lower()
+                if 'left' in lbl:
+                    left = d
+                elif 'right' in lbl:
+                    right = d
+            except Exception:
+                pass
+    if not left:
+        for p in ['/sys/bus/i2c/devices/9-005a', '/sys/bus/i2c/devices/11-005a']:
+            if os.path.exists(p) and p != right:
+                left = p
+                break
+    if not right:
+        for p in ['/sys/bus/i2c/devices/11-0059', '/sys/bus/i2c/devices/9-0059', '/sys/bus/i2c/devices/11-005a']:
+            if os.path.exists(p) and p != left:
+                right = p
+                break
+    return left, right
+
+SYSFS_LEFT, SYSFS_RIGHT = find_devices()
+FW_DIR = '/lib/firmware/awinic'
+
+def write_sysfs(path, val):
+    try:
+        with open(path, 'w') as f:
+            f.write(str(val))
+    except Exception as e:
+        print(f'Error writing {val} to {path}: {e}', file=sys.stderr)
+
+def get_targets(target):
+    t = target.lower()
+    if t in ('l', 'left'):
+        return [SYSFS_LEFT] if SYSFS_LEFT else []
+    elif t in ('r', 'right'):
+        return [SYSFS_RIGHT] if SYSFS_RIGHT else []
+    elif t in ('b', 'both', 'all'):
+        res = []
+        if SYSFS_LEFT: res.append(SYSFS_LEFT)
+        if SYSFS_RIGHT: res.append(SYSFS_RIGHT)
+        return res
+    else:
+        print(f'Unknown target: {target}', file=sys.stderr)
+        return []
+
+def get_name(dev):
+    return 'LEFT' if dev == SYSFS_LEFT else 'RIGHT'
+
+def init_sram(quiet=True):
+    """Stop both motors and set default level and duration.
+
+    The driver loads the SRAM waveforms (haptic_ram.bin, built into the
+    kernel) at probe, so no rebind is needed.
+    """
+    for dev in (SYSFS_LEFT, SYSFS_RIGHT):
+        if not dev or not os.path.exists(dev): continue
+        write_sysfs(f'{dev}/activate', '0')
+        write_sysfs(f'{dev}/level', '255')
+        write_sysfs(f'{dev}/duration', '60')
+    if not quiet:
+        print(f'Initialized AW86927 haptic controllers: Left={SYSFS_LEFT}, Right={SYSFS_RIGHT}')
+
+def play_ram(target, index, duration=100, level=128):
+    targets = get_targets(target)
+    if not targets:
+        print('No haptic devices found!', file=sys.stderr)
+        return
+    for dev in targets:
+        write_sysfs(f'{dev}/activate', '0')
+        write_sysfs(f'{dev}/level', str(level))
+        write_sysfs(f'{dev}/index', str(index))
+        write_sysfs(f'{dev}/duration', str(duration))
+        write_sysfs(f'{dev}/activate', '1')
+
+def stream_device(dev, data, effect_name):
+    write_sysfs(f'{dev}/activate', '0')
+    write_sysfs(f'{dev}/rtp_mode', '1')
+    try:
+        chunk_size = 512
+        total = len(data)
+        is_tty = sys.stdout.isatty()
+        with open(f'{dev}/rtp', 'wb') as f:
+            for i in range(0, total, chunk_size):
+                chunk = data[i:i+chunk_size]
+                f.write(chunk)
+                f.flush()
+                time.sleep(0.005)
+                if is_tty:
+                    pct = int((i + len(chunk)) * 100 / total)
+                    bar = '=' * (pct // 5) + '>' + ' ' * (20 - (pct // 5))
+                    sys.stdout.write(f'\r[{get_name(dev)}] [{bar}] {pct}% ({effect_name})')
+                    sys.stdout.flush()
+        if is_tty:
+            sys.stdout.write(f'\r[{get_name(dev)}] [====================] 100% ({effect_name})\n')
+            sys.stdout.flush()
+    except Exception as e:
+        print(f'Error streaming RTP to {dev}: {e}', file=sys.stderr)
+    finally:
+        write_sysfs(f'{dev}/rtp_mode', '0')
+
+def play_rtp(target, effect_pattern):
+    targets = get_targets(target)
+    if not targets:
+        print('No haptic devices found!', file=sys.stderr)
+        return
+
+    files = glob.glob(f'{FW_DIR}/*{effect_pattern}*.bin')
+    if not files:
+        print(f'No RTP effect matched "{effect_pattern}" in {FW_DIR}', file=sys.stderr)
+        return
+    fw_file = sorted(files)[0]
+    effect_name = os.path.basename(fw_file)
+    with open(fw_file, 'rb') as f:
+        data = f.read()
+
+    threads = []
+    for dev in targets:
+        t = threading.Thread(target=stream_device, args=(dev, data, effect_name))
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
+
+def stop_all(target='both'):
+    targets = get_targets(target)
+    for dev in targets:
+        write_sysfs(f'{dev}/activate', '0')
+        write_sysfs(f'{dev}/rtp_mode', '0')
+
+def list_effects():
+    print(f'Discovered Hardware:')
+    print(f'  LEFT  motor: {SYSFS_LEFT}')
+    print(f'  RIGHT motor: {SYSFS_RIGHT}')
+    print('\n=== AW86927 SRAM WAVEFORMS ===')
+    print('  Presets 1..33: crisp clicks, ticks, thuds, ramps, sharp pulses')
+    print('\n=== VENDOR RTP EFFECT BINARIES (/lib/firmware/awinic/) ===')
+    files = sorted(glob.glob(f'{FW_DIR}/*.bin'))
+    if not files:
+        print('  (No RTP files found in /lib/firmware/awinic/)')
+    for idx, f in enumerate(files):
+        print(f'  [{idx:3d}] {os.path.basename(f)}')
+
+def test_sequence():
+    print('Testing Left motor...')
+    play_ram('left', 1, 80, 128)
+    time.sleep(0.3)
+
+    print('Testing Right motor...')
+    play_ram('right', 1, 80, 128)
+    time.sleep(0.3)
+
+    print('Testing Stereo dual sync...')
+    play_ram('both', 1, 80, 128)
+    time.sleep(0.4)
+
+    print('Testing Stereo bounce...')
+    play_ram('left', 2, 60, 128)
+    time.sleep(0.12)
+    play_ram('right', 2, 60, 128)
+    time.sleep(0.12)
+    play_ram('left', 2, 60, 128)
+    time.sleep(0.4)
+
+    print('Test sequence completed.')
+
+def main():
+    if len(sys.argv) < 2:
+        print('Usage: y700-haptic <command> [args...]')
+        print('Commands:')
+        print('  init                                      Stop motors, set default level/duration')
+        print('  ram <left|right|both> <index 1..33> [ms] [level 1..255]')
+        print('  rtp <left|right|both> <effect_pattern>')
+        print('  stop [left|right|both]')
+        print('  list')
+        print('  test')
+        sys.exit(0)
+
+    cmd = sys.argv[1].lower()
+    if cmd == 'init':
+        init_sram(quiet=False)
+    elif cmd == 'ram':
+        target = sys.argv[2] if len(sys.argv) > 2 else 'both'
+        idx = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+        dur = int(sys.argv[4]) if len(sys.argv) > 4 else 100
+        lvl = int(sys.argv[5]) if len(sys.argv) > 5 else 128
+        play_ram(target, idx, dur, lvl)
+    elif cmd == 'rtp':
+        target = sys.argv[2] if len(sys.argv) > 2 else 'both'
+        effect = sys.argv[3] if len(sys.argv) > 3 else 'kick'
+        play_rtp(target, effect)
+    elif cmd == 'stop':
+        target = sys.argv[2] if len(sys.argv) > 2 else 'both'
+        stop_all(target)
+    elif cmd == 'list':
+        list_effects()
+    elif cmd == 'test':
+        test_sequence()
+    else:
+        print(f'Unknown command: {cmd}')
+
+if __name__ == '__main__':
+    main()

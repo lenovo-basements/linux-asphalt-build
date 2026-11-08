@@ -1,0 +1,11 @@
+# Novatek NT36523N Touchscreen & Stylus Configuration
+
+# Bind touchscreen input to primary display DSI-1 for Wayland / KWin
+KERNEL=="event*", ATTRS{name}=="*[Nn]ovatek*", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_TOUCHSCREEN}="1", \
+  ENV{WL_OUTPUT}="DSI-1", TAG+="uaccess"
+
+# Stylus / Pen support
+KERNEL=="event*", ATTRS{name}=="*[Nn]ovatek*[Pp]en*", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_TABLET}="1", \
+  ENV{WL_OUTPUT}="DSI-1", TAG+="uaccess"

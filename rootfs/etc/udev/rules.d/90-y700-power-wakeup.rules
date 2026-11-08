@@ -1,0 +1,16 @@
+# Hall events travel through SLPI; allow its interrupt to wake the AP.
+SUBSYSTEM=="platform", KERNEL=="smp2p-slpi", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"
+
+# Prevent unwanted wakeup sources from interrupting deep suspend
+
+# Disable wakeup on battery and power supply monitoring (qcom-battmgr polls every ~13s)
+SUBSYSTEM=="power_supply", ATTR{power/wakeup}=="enabled", ATTR{power/wakeup}="disabled"
+
+# Disable wakeup on PCIe WiFi (ath11k/mhi0) to prevent background beacon wakeups
+SUBSYSTEM=="pci", ATTR{power/wakeup}=="enabled", ATTR{power/wakeup}="disabled"
+
+# Disable thermal sensor wakeups
+SUBSYSTEM=="platform", KERNEL=="*thermal-sensor*", ATTR{power/wakeup}=="enabled", ATTR{power/wakeup}="disabled"
+
+# Disable DWC3 USB controller wakeup to prevent spurious DP/DM PHY line wakeups
+SUBSYSTEM=="platform", KERNEL=="*.usb", ATTR{power/wakeup}=="enabled", ATTR{power/wakeup}="disabled"

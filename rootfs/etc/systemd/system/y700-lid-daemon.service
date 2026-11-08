@@ -1,0 +1,12 @@
+[Unit]
+Description=Lenovo Legion Y700 (2023) Folio Case Hall Sensor Daemon
+After=hexagonrpcd-sdsp.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/y700-lid-daemon
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
