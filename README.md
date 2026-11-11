@@ -64,6 +64,16 @@ It’s doable — this tablet uses AVBv2 with avb-custom-keys support — but I 
 
 TO-DO, i didn't want some users report with bricked tablet
 
+## Dual booting
+
+doable, if you aren't stupid, it's possible by using slots B as
+
+- ZUI* only take slots A, you can repartition userdata and use boot, dtbo and vendor_boot into slot b
+- if you want to dual boot with other OS like lineage, Crdroid or whatever you want, must be installed with fastboot packages
+- if you want triple booting (eg: with unixnu or mu-silicium), you must use another method or find way to boot over sdcard
+
+* if you're using zui as main OSes, be careful as some firmware, booting to B guarantee to get you into brazil (EDL)
+
 ## Issues report and AI policy
 
 - i **don't** give a fuck on AI involved as this start as personal project.
