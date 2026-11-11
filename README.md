@@ -12,6 +12,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 - This project is based on [torvalds/linux](https://github.com/torvalds/linux). Stability is questionable and depends on how heavy the merge commit is.
 - I take **zero** responsibility if something goes wrong, or if you get fired because Slack video calls break, or Microsoft Teams stops working after a kernel update. If you point at me for that, I’ll laugh at you.
 - This is **not** a complete, plug-and-play rootfs. You must build the dependencies yourself.
+- i'm not gonna submit this to LKML, dealing with android giving me enough headache, i didn't want an extras
 
 ## Resources
 
@@ -37,7 +38,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Iris (VPU)** | Hardware accelerated on V4L2. VA-API needs [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) |
 | **Haptics** | AW86927 — upstream + small dual-haptics changes. Currently 7 SRAM firmwares loaded; plan to push all 138 RTP effects later |
 | **Sensors** | Auto-brightness, lid-cover suspend, gyroscope. CDSP / SDSP / ADSP working |
-| **Suspend** | Works via normal sleep + power button. **s2idle only** for now — camera RPMh makes deep sleep panic |
+| **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working |
 | **Charging** | Bypass charging works (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
 | **Thermal** | Working. Power profiles included |
 
