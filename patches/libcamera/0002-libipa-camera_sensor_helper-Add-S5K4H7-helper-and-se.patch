@@ -1,0 +1,74 @@
+From 974163a0904bd1284b685aedad86488cad19fe8d Mon Sep 17 00:00:00 2001
+From: lolipuru <banstellazz@gmail.com>
+Date: Fri, 13 Nov 2026 03:51:21 +0700
+Subject: [PATCH] libipa: camera_sensor_helper: Add S5K4H7 helper and sensor
+ properties
+
+Add a camera sensor helper and sensor properties for the Samsung S5K4H7,
+an 8MP 1.12um sensor (used e.g. as the front camera of the Lenovo Legion
+Y700 Gen 2).
+
+The analogue gain is the standard SMIA code in register 0x0204, with
+32 = 1x in 1/32 steps up to 512 (16x). The black level is 64 at 10 bits:
+a raw RAW10 frame with the lens covered has a median of exactly 64 (per
+Bayer phase means 64.08, 64.06, 63.99 and 64.05).
+
+The test pattern control follows the SMIA test pattern register, so the
+menu indices map directly to the libcamera modes.
+
+Assisted-by: LLM
+Signed-off-by: lolipuru <banstellazz@gmail.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp           | 13 +++++++++++++
+ src/libcamera/sensor/camera_sensor_properties.cpp | 11 +++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 9b06397..f77ef38 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -840,6 +840,19 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("ov13b10", CameraSensorHelperOv13b10)
+ 
++class CameraSensorHelperS5k4h7 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperS5k4h7()
++	{
++		/* Black level of 64 at 10 bits */
++		blackLevel_ = 4096;
++		/* Analogue gain = code / 32, 32 (1x) to 512 (16x) */
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 32 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("s5k4h7", CameraSensorHelperS5k4h7)
++
+ class CameraSensorHelperVd55g1 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index d564368..3dceea5 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -517,6 +517,17 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 			},
+ 			.sensorDelays = { },
+ 		} },
++		{ "s5k4h7", {
++			.unitCellSize = { 1120, 1120 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			.sensorDelays = { },
++		} },
+ 		{ "vd55g1", {
+ 			.unitCellSize = { 2160, 2160 },
+ 			.testPatternModes = {
+-- 
+2.56.0
+
