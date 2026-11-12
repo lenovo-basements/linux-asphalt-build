@@ -2,7 +2,8 @@
 # Build the TB320FC (Lenovo Legion Y700 Gen 2, "asphalt") kernel and package
 #
 #   scripts/kernel/build-kernel.sh --src ~/linux --baseline ~/asphalt-baseline \
-#       --out /tmp/asphalt-build --artifacts ./out [--localversion -asphalt]
+#       --out /tmp/asphalt-build --artifacts ./out [--localversion -asphalt] \
+#       [--fragment scripts/kernel/asphalt.config ...]
 #
 # Works on Linux (native arm64 or cross with LLVM) and on macOS (Homebrew
 # llvm, lld, make, gnu-sed, coreutils). See scripts/kernel/README.md.
@@ -10,6 +11,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="" OUT="" ART="" BASELINE="" LOCALVERSION="" JOBS=""
+FRAGMENTS=()
 DTB_NAME=sm8475-lenovo-tb320fc
 
 usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -20,6 +22,7 @@ while [[ $# -gt 0 ]]; do
         --artifacts) ART="$2"; shift 2 ;;
         --baseline) BASELINE="$2"; shift 2 ;;
         --localversion) LOCALVERSION="$2"; shift 2 ;;
+        --fragment) FRAGMENTS+=("$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"); shift 2 ;;
         -j|--jobs) JOBS="$2"; shift 2 ;;
         -h|--help) usage 0 ;;
         *) echo "unknown option: $1" >&2; usage 1 ;;
@@ -58,7 +61,38 @@ git -C "$SRC" diff HEAD --binary > "$ART/source.patch" 2>/dev/null || true
 if [[ -n "$LOCALVERSION" ]]; then
     "$SRC/scripts/config" --file "$OUT/.config" --set-str LOCALVERSION "$LOCALVERSION"
 fi
+if [[ ${#FRAGMENTS[@]} -gt 0 ]]; then
+    # Merge config fragments into the existing .config (no make here).
+    KCONFIG_CONFIG="$OUT/.config" "$SRC/scripts/kconfig/merge_config.sh" -m -O "$OUT" \
+        "$OUT/.config" "${FRAGMENTS[@]}"
+    mkdir -p "$ART/fragments"
+    cp "${FRAGMENTS[@]}" "$ART/fragments/"
+fi
 run_make olddefconfig
+if [[ ${#FRAGMENTS[@]} -gt 0 ]]; then
+    # olddefconfig silently drops options whose dependencies are not met:
+    # list every requested value that did not survive.
+    : > "$ART/fragments/not-applied.txt"
+    for frag in "${FRAGMENTS[@]}"; do
+        while IFS= read -r line; do
+            case "$line" in
+                CONFIG_*=*) want="$line"; sym="${line%%=*}" ;;
+                "# CONFIG_"*" is not set") want="$line"; sym="${line#\# }"; sym="${sym%% *}" ;;
+                *) continue ;;
+            esac
+            got="$(grep -E "^(# )?$sym[= ]" "$OUT/.config" || echo "$sym missing")"
+            # a symbol whose dependencies are unmet is absent: that is "not set"
+            [[ "$got" == "$sym missing" && "$want" == "# $sym is not set" ]] && continue
+            if [[ "$got" != "$want" ]]; then
+                echo "$(basename "$frag"): wanted '$want', got '$got'" >> "$ART/fragments/not-applied.txt"
+            fi
+        done < "$frag"
+    done
+    if [[ -s "$ART/fragments/not-applied.txt" ]]; then
+        echo "WARNING: fragment values not applied (see $ART/fragments/not-applied.txt):" >&2
+        cat "$ART/fragments/not-applied.txt" >&2
+    fi
+fi
 run_make -j"$JOBS" Image modules "qcom/$DTB_NAME.dtb"
 
 cp "$OUT/arch/arm64/boot/Image" "$OUT/arch/arm64/boot/dts/qcom/$DTB_NAME.dtb" \

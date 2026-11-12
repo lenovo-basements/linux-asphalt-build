@@ -20,7 +20,15 @@ scripts/kernel/build-kernel.sh \
 | `--artifacts` | Where the results go (see below). |
 | `--baseline` | Packaging baseline (see below). |
 | `--localversion` | Optional `CONFIG_LOCALVERSION`. Use a new one per experiment so its modules don't overwrite the running kernel's. |
+| `--fragment` | Config fragment merged into `.config` before `olddefconfig`; repeatable. `asphalt.config` is the device fragment; `asphalt-cfi.config` and `asphalt-lto.config` are one-off trials. Values that did not survive are listed in `<artifacts>/fragments/not-applied.txt`. |
 | `-j` | Parallel jobs (default: all CPUs). |
+
+`package-boot.py` also takes `--kernel-compression {none,lz4,gz}` (default
+`none`): the kernel is stored in boot.img as legacy-frame LZ4 or gzip, like
+GKI's `Image.lz4` / `Image.gz`, and the bootloader decompresses it. With
+`lz4` a 68.6 MB Image packs to about 24 MB, which leaves room in the 96 MiB
+boot partition for options such as kCFI. Whether TB320FC's ABL accepts it is
+being verified.
 
 ## Host requirements
 
