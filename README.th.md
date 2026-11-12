@@ -50,6 +50,11 @@
 | **AV1** | ไปด่า qcom ว่าทำไมมึงไม่ใส่ hardware acceleration มาให้ เพราะงั้นอย่าหาเปิด AV1 เด็ดขาด |
 | **Stylus** | AP500U / AP501U / Precision Pen 2. ไม่มีติดตัวสักอัน เลยซัพพอร์ตไม่ได้ |
 
+## Technical notes
+| Component | Notes |
+| --- | --- |
+| **WIFI** | ath11k เจอปัญหา D3cold พัง แล้วเป็นแค่กับ lenovo ด้วยนะ ไปอ่านเอาใน [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) เพราะรายละเอียดมันหนามาก|
+
 ## Relock bootloader
 
 มึงบ้าป่าวไอ้ชาย?

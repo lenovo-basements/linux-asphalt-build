@@ -50,6 +50,11 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom |
 | **Stylus** | AP500U / AP501U and Precision Pen 2. which i don’t have |
 
+## Technical notes
+| Component | Notes |
+| --- | --- |
+| **WIFI** | ath11k have D3cold failure which is unique to lenovo (lmao), so 2s firmware reload after suspend is normal, WoW policy won't works there [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) |
+
 ## Relock bootloader
 
 Are you fucking serious?
