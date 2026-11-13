@@ -32,7 +32,7 @@
 | **จอภาพ** | 30/60/120/144 Hz ใช้ได้หมดนะ. VRR ก็ได้ตั้งแต่ ~48 Hz ลากยาวถึง 144 Hz. จริงๆ 30 Hz มันรับนะ แต่ Lenovo ไม่ได้ตั้ง `mdss-dsi-qsync-min-refresh-rate` ไว้ มันเลยได้แค่ 48hz นั่นแหล่ะ [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
 | **microSD** | ความเร็วไม่ได้แย่นะ ลองกับ SanDisk Ultra (A1) มันก็พอได้อยู่อะ|
 | **ทัชสกรีน** | Novatek NT36523n — upstream + โค้ดฝั่ง lenovo นิดหน่อย สำหรับสไตลัส |
-| **Fuel gauge** | พวก % แบตเตอรี่กับชาร์จเร็วใช้โค้ด upstream หมด, lenovo ใช้โค้ด qcom หมดเลยไม่ต้องอะไรเยอะ |
+| **Fuel gauge** | ตอนนี้รีพอร์ตถูกต้อง 100% (เฟิร์มแวร์ lenovo แม่งรีพอร์ต `power_now` เป็น state of charge, วัดจาก Current × Voltage) ของแถมคือ SC8280XP แม่งก็รีพอร์ตเป็น µAh แทนที่จะเป็น mAh |
 | **กล้อง** | ROW กับ PRC ใช้กล้องคนละชุดกัน อันนี้ของ ROW (`ov13b10`, `s5k4h7`, `sc202cs`) ถ้าใช้ NEC (เครื่องญี่ปุ่น)... โชคดี bro (เพราะใช้ `gc02m1` เป็น marco) ถ้าใช้เครื่อง PRC ก็โชคดีเช่นกัน กล้องแม่งคนละตัวเลย (`hi1339` ในเลนส์หลัก) |
 | **USB** | ใช้ได้หมดทั้ง 2 พอร์ตอะ รวมถึงต่ออกจอได้ y700 ทุกรุ่นใน้ usb แบบ priority หมด อันนี้อธิบายแยก [ที่นี่](/docs/port_priority.th.md) |
 | **UFS** | ใช้ได้ ติดแค่มันสุดได้แค่ HS-GEAR4 (Rate A) เพราะ UFS มันได้แค่นี้ ทำไงได้ |

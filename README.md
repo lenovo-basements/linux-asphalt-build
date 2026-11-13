@@ -32,7 +32,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Display** | 30/60/120/144 Hz reported correctly. VRR from ~48 Hz up to 144 Hz. 30 Hz is supported in hardware, but Lenovo never set `mdss-dsi-qsync-min-refresh-rate` to 30, so the default floor is currently 48 Hz. [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
 | **microSD** | Tested with SanDisk Ultra (A1) |
 | **Touch** | Novatek NT36523n — upstream + device-specific changes |
-| **Fuel gauge** | Basic battery report + charging via upstream code |
+| **Fuel gauge** | battery report is now working properly with `power_now` and `µAh unit` implement (lenovo firmware only answer `power_now` with state of charge (measure with Current × Voltage) SC8280XP on lenovo sm8475 use µAh instead of mAh) |
 | **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera and `gc02m1` for NEC (need confirmation)|
 | **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration. usb on y700 (pretty much all generations) have usb port priority, more info on [port priority](/docs/port_priority.md) |
 | **UFS** | Working. Limited to HS-GEAR4 (Rate A) because of the UFS hardware itself |
@@ -40,7 +40,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Haptics** | AW86927 — upstream + small dual-haptics changes. rootfs only shipped 7 SRAM firmwares; other 131 haptics firmware are now working, and optional (you much ship firmware yourself) delay is vary between 1ms <> 5ms mesaure by median latency (4 i2c transfers) |
 | **Sensors** | Auto-brightness, lid-cover suspend, gyroscope. CDSP / SDSP / ADSP working |
 | **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working |
-| **Charging** | Bypass charging works (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
+| **Charging** | base charging code is using upstream code, with bypass charging (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
 | **Thermal** | Working. Power profiles included |
 
 ## What doesn’t work / TO-DO
