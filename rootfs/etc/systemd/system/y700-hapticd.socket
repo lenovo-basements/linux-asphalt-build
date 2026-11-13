@@ -1,11 +1,13 @@
 [Unit]
-Description=Lenovo Legion Y700 RTP haptic event socket
+Description=Y700 haptics broker: request datagrams (legacy y700-haptic-rtp path)
 
 [Socket]
 ListenDatagram=/run/y700-haptic-rtp.sock
 SocketUser=root
 SocketGroup=input
 SocketMode=0660
+FileDescriptorName=dgram
+Service=y700-hapticd.service
 
 [Install]
 WantedBy=sockets.target

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Lenovo Legion Y700 (2023) / TB320FC / asphalt
-Ask y700-haptic-rtp to play an event effect. Best effort: never blocks, never
+Ask y700-hapticd (legacy datagram socket) to play an event effect. Best effort: never blocks, never
 fails the caller when haptics are unavailable.
 
 Usage: y700-haptic-event EVENT

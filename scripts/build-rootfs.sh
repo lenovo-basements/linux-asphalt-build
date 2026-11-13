@@ -305,6 +305,13 @@ LABEL=y700-arch             /              ext4    rw,noatime      0       1
 # Factory sensor calibration is copied into /var/lib on first sensor startup.
 /dev/disk/by-partlabel/persist /mnt/persist  ext4    ro,nofail       0       0
 EOF
+MICROSD_UID=$(chroot "$TARGET_ROOT" id -u "$USERNAME")
+MICROSD_GID=$(chroot "$TARGET_ROOT" id -g "$USERNAME")
+# File-manager re-mounts (udisks) follow this line to the microSD service's
+# path; the symlink comes from 89-y700-microsd.rules (FAT-family cards only,
+# the line carries uid/gid).
+printf '/dev/disk/y700-microsd      /mnt/microsd   auto    noauto,nofail,noatime,nosuid,nodev,exec,uid=%s,gid=%s,umask=022,x-gvfs-show 0 0\n' \
+    "$MICROSD_UID" "$MICROSD_GID" >> "${TARGET_ROOT}/etc/fstab"
 
 echo ""
 echo "==========================================================="

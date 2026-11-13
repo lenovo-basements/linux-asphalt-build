@@ -1,0 +1,15 @@
+[Unit]
+Description=Y700 haptics broker: request FIFO
+
+[Socket]
+ListenFIFO=/run/y700-hapticd/fifo
+DirectoryMode=0755
+SocketUser=root
+SocketGroup=input
+SocketMode=0660
+FileDescriptorName=fifo
+RemoveOnStop=yes
+Service=y700-hapticd.service
+
+[Install]
+WantedBy=sockets.target

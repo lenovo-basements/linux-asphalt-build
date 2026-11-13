@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""y700-hapticctl: talk to y700-hapticd.
+
+  y700-hapticctl stats                 counters, volume, mute, effect list
+  y700-hapticctl watch                 live stream of every request and its fate
+  y700-hapticctl mute | unmute
+  y700-hapticctl volume 0-100
+  y700-hapticctl play NAME [PERCENT] [top|bottom|both]
+"""
+import json
+import socket
+import sys
+
+CONTROL = "/run/y700-hapticd/control"
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if len(argv) > 1 else 2
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(CONTROL)
+        client.sendall(" ".join(argv[1:]).encode())
+        stream = client.makefile("r")
+        first = json.loads(stream.readline() or "{}")
+        if argv[1] != "watch" or "error" in first:
+            print(json.dumps(first, indent=2))
+            return 1 if "error" in first else 0
+        for line in stream:
+            event = json.loads(line)
+            print(f"{event['t']:>12.4f}  {event['effect']:<12} {event['source']:<8} "
+                  f"{event['result']:<13} {event['ms']:.2f} ms", flush=True)
+    except KeyboardInterrupt:
+        return 0
+    except OSError as error:
+        print(f"y700-hapticctl: {error} (is y700-hapticd.socket enabled?)", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

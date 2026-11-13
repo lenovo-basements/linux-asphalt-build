@@ -1,0 +1,14 @@
+[Unit]
+Description=Y700 haptics broker: control socket (y700-hapticctl)
+
+[Socket]
+ListenStream=/run/y700-hapticd/control
+DirectoryMode=0755
+SocketUser=root
+SocketGroup=input
+SocketMode=0660
+FileDescriptorName=control
+Service=y700-hapticd.service
+
+[Install]
+WantedBy=sockets.target

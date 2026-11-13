@@ -9,6 +9,7 @@ ENV{ID_PART_ENTRY_TYPE}=="0xef", GOTO="y700_microsd_end"
 # Stay visible to udisks (file manager sidebars) but never let the desktop
 # automounter grab it first; the label-independent name is for the sidebar.
 ENV{UDISKS_AUTO}="0", ENV{UDISKS_NAME}="microSD"
+ENV{ID_FS_TYPE}=="exfat|vfat|ntfs", SYMLINK+="disk/y700-microsd"
 TAG+="systemd", ENV{SYSTEMD_WANTS}+="y700-microsd@%k.service"
 
 LABEL="y700_microsd_end"

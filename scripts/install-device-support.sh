@@ -83,6 +83,7 @@ install -m 644 "${REPO_DIR}/rootfs/usr/share/polkit-1/actions/local.lenovo.y700.
     "${TARGET_ROOT}/usr/share/polkit-1/actions/"
 mkdir -p "${TARGET_ROOT}/etc/polkit-1/rules.d"
 install -m 644 "${REPO_DIR}/rootfs/etc/polkit-1/rules.d/49-y700-charge.rules" \
+    "${REPO_DIR}/rootfs/etc/polkit-1/rules.d/49-y700-microsd.rules" \
     "${TARGET_ROOT}/etc/polkit-1/rules.d/"
 EXTENSION_DIR="usr/share/gnome-shell/extensions/y700-haptics@lenovo.local"
 mkdir -p "${TARGET_ROOT}/${EXTENSION_DIR}"
@@ -181,7 +182,8 @@ if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
         systemctl enable y700-suspend-sensors.service
         systemctl enable y700-bluetooth-setup.service 2>/dev/null || true
         systemctl enable y700-wifi-mac.service 2>/dev/null || true
-        systemctl enable y700-haptic-rtp.socket 2>/dev/null || true
+        systemctl disable y700-haptic-rtp.socket 2>/dev/null || true  # replaced by y700-hapticd
+        systemctl enable y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket 2>/dev/null || true
         systemctl enable tuned.service tuned-ppd.service 2>/dev/null || true
         udevadm control --reload 2>/dev/null || true
         udevadm trigger 2>/dev/null || true
@@ -200,7 +202,10 @@ if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/NetworkManager.service.wants"
         ln -sf ../y700-wifi-mac.service "${TARGET_ROOT}/etc/systemd/system/NetworkManager.service.wants/y700-wifi-mac.service"
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants"
-        ln -sf ../y700-haptic-rtp.socket "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants/y700-haptic-rtp.socket"
+        rm -f "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants/y700-haptic-rtp.socket"
+        for unit in y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket; do
+            ln -sf "../${unit}" "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants/${unit}"
+        done
         ln -sf /usr/lib/systemd/system/tuned.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/tuned.service"
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/graphical.target.wants"
         ln -sf /usr/lib/systemd/system/tuned-ppd.service "${TARGET_ROOT}/etc/systemd/system/graphical.target.wants/tuned-ppd.service"

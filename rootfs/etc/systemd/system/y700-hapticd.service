@@ -1,0 +1,16 @@
+[Unit]
+Description=Y700 haptics broker (owns both AW86927 motors)
+Requires=y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket
+After=y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket
+
+[Service]
+Type=simple
+Sockets=y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket
+ExecStart=/usr/local/bin/y700-hapticd
+# stays resident: a gesture must never wait for Python to start
+Restart=on-failure
+StateDirectory=y700-hapticd
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/run/y700-hapticd /sys

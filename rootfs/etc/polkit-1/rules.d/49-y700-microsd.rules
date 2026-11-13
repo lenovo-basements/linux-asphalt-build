@@ -1,0 +1,11 @@
+polkit.addRule(function(action, subject) {
+    if (action.id !== 'org.freedesktop.udisks2.filesystem-unmount-others' &&
+        action.id !== 'org.freedesktop.udisks2.filesystem-mount' &&
+        action.id !== 'org.freedesktop.udisks2.filesystem-fstab')
+        return;
+
+    if (/^\/dev\/mmcblk[0-9]+p?[0-9]*$/.test(action.lookup('device') || '') &&
+        subject.local && subject.active && subject.isInGroup('storage')) {
+        return polkit.Result.YES;
+    }
+});

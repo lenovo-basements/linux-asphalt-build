@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""
+Lenovo Legion Y700 (2023) / TB320FC / asphalt
+y700-hapticd: the one owner of the two AW86927 haptic motors.
+
+Every client asks for a named effect; the daemon decides what actually plays.
+
+  effects   SRAM pulse patterns (tick, tap, toggle, heavy, gesture, swipe-left,
+            swipe-right, error) and Lenovo's RTP waveforms (notify, charge-on,
+            charge-off, lock, unlock, login). Request: "name [percent] [motor]",
+            motor = top | bottom | both; "charger" (udev) becomes charge-on/off.
+  inputs    (all from y700-hapticd.socket, writable by the "input" group)
+            fifo     /run/y700-hapticd/fifo, one request per line. No process
+                     to spawn: Hyprland's Lua and shell scripts write directly.
+            dgram    /run/y700-haptic-rtp.sock, one request per datagram
+                     (y700-haptic-event, the udev charger rule).
+            control  /run/y700-hapticd/control, stream, for y700-hapticctl:
+                     stats | watch | mute | unmute | volume N | play REQUEST
+  policy    one effect at a time. A higher priority (system > strong > touch)
+            preempts a running SRAM pattern; anything else is dropped, never
+            queued. Touch effects are rate limited and muted while the panel
+            backlight is off. Volume and mute persist across restarts.
+
+Raw RTP streaming stays inside this root daemon: clients can only pick from
+the fixed effect table, never send PCM that could hold a motor at full drive.
+"""
+import heapq
+import json
+import queue
+import os
+import selectors
+import socket
+import sys
+import threading
+import time
+from glob import glob
+
+FIRMWARE = os.environ.get("FIRMWARE", "/lib/firmware/awinic")
+STATE_DIR = os.environ.get("STATE_DIRECTORY", "/var/lib/y700-hapticd")
+RUN_DIR = os.environ.get("RUNTIME_DIRECTORY", "/run/y700-hapticd")
+CHARGER = "/sys/class/power_supply/qcom-battmgr-usb/online"
+BACKLIGHT = "/sys/class/backlight/ktz8866-backlight/bl_power"
+
+
+# "top" (a8c000.i2c) and "bottom" (a98000.i2c) are the motor ends in portrait.
+def find_motor(controller, default):
+    matches = sorted(glob(f"/sys/devices/platform/soc@0/ac0000.geniqup/{controller}/i2c-*/*-005a"))
+    return f"/sys/bus/i2c/devices/{os.path.basename(matches[0])}" if matches else default
+
+
+MOTORS = {
+    "top": find_motor("a8c000.i2c", "/sys/bus/i2c/devices/11-005a"),
+    "bottom": find_motor("a98000.i2c", "/sys/bus/i2c/devices/13-005a"),
+}
+BOTH = ("top", "bottom")
+
+# --- SRAM pulse patterns ------------------------------------------------------
+# SRAM #3 has the most energy of the waveforms that stay unclipped at gains
+# above 128 (0x80 is 1.0x); patterns differ by rhythm, strength and motor.
+WAVEFORM = 3
+PULSE_MS = 30
+# Each step: (delay after the previous step in ms, gain 0-255, motors).
+PATTERNS = {
+    "tick": ((0, 120, BOTH),),
+    "tap": ((0, 200, BOTH),),
+    "toggle": ((0, 200, BOTH), (70, 200, BOTH)),
+    "heavy": ((0, 255, BOTH), (30, 255, BOTH)),
+    "gesture": ((0, 90, BOTH), (60, 150, BOTH), (60, 230, BOTH)),
+    # Follow the finger across the screen: "left"/"right" are screen sides.
+    "swipe-left": ((0, 200, ("right",)), (90, 200, ("left",))),
+    "swipe-right": ((0, 200, ("left",)), (90, 200, ("right",))),
+    "error": ((0, 230, BOTH), (80, 230, BOTH), (80, 230, BOTH)),
+}
+
+# --- RTP waveforms ------------------------------------------------------------
+# event: (vendor file, seconds to keep or None for all, peak to scale to or None)
+RTP_EFFECTS = {
+    "notify": ("159_Drip_RTP.bin", None, None),
+    # Lenovo authored these two far quieter (peaks 45 and 20) than Drip (100).
+    "charge-on": ("241_Pulse_RTP.bin", None, 100),
+    "charge-off": ("243_Light_RTP.bin", None, 100),
+    "lock": ("246_kick_RTP.bin", None, None),
+    "unlock": ("242_Starlight_RTP.bin", None, None),
+    # The opening swell; it ends in silence at 2.1 s, the rest is a 25 s ringtone.
+    "login": ("237_Legion_RTP.bin", 2.2, None),
+}
+RATE = 24000
+LEVEL = 128          # PLAYCFG2 gain at 100 % volume; 0x80 is 1.0x
+MAX_SECONDS = 5
+CHUNK = 256
+LEAD = 1024          # the RTP FIFO is ~2 KB of SRAM; stay well under it
+STALL = 0.2          # CLOCK_BOOTTIME jump: the chip lost the stream (suspend)
+
+TOUCH, STRONG, SYSTEM = 0, 1, 2
+PRIORITY = {name: TOUCH for name in PATTERNS}
+PRIORITY.update(heavy=STRONG, error=STRONG)
+PRIORITY.update({name: SYSTEM for name in RTP_EFFECTS})
+TOUCH_GAP = 0.06     # seconds between touch effects
+WATCHERS_MAX = 8
+REG_CACHE_S = 2.0    # trust cached motor attributes this long
+
+
+def put(device, name, value):
+    with open(f"{device}/{name}", "w") as attribute:
+        attribute.write(f"{value}\n")
+
+
+def rtp_stream(device, data, level, clock=lambda: time.clock_gettime(time.CLOCK_BOOTTIME)):
+    put(device, "activate", 0)
+    put(device, "level", level)
+    put(device, "rtp_mode", 1)
+    try:
+        fd = os.open(f"{device}/rtp", os.O_WRONLY)
+        try:
+            start = clock()
+            sent = 0
+            while sent < len(data):
+                played = (clock() - start) * RATE
+                if played - sent > STALL * RATE:
+                    return
+                if sent - played > LEAD:
+                    time.sleep(max(0.002, (sent - played - LEAD) / RATE))
+                    continue
+                sent += os.pwrite(fd, data[sent:sent + CHUNK], 0)
+            # let the FIFO drain before leaving RTP mode
+            time.sleep(max(0.0, sent / RATE - (clock() - start)) + 0.02)
+        finally:
+            os.close(fd)
+    finally:
+        put(device, "rtp_mode", 0)
+
+
+def rtp_load(name):
+    path, seconds, peak = RTP_EFFECTS[name]
+    try:
+        with open(f"{FIRMWARE}/{path}", "rb") as effect:
+            data = effect.read(int(RATE * min(seconds or MAX_SECONDS, MAX_SECONDS)))
+    except OSError:
+        return None
+    if not peak:
+        return data
+    samples = [b - 256 if b > 127 else b for b in data]
+    largest = max((abs(s) for s in samples), default=0)
+    if not largest:
+        return data
+    return bytes(max(-127, min(127, round(s * peak / largest))) & 0xff for s in samples)
+
+
+def read(path):
+    try:
+        with open(path) as attribute:
+            return attribute.read().strip()
+    except OSError:
+        return None
+
+
+class ScreenSides:
+    """Motors at the screen's left/right, from the Hyprland DSI-1 transform (cached)."""
+
+    def __init__(self):
+        self.value, self.when = 0, float("-inf")
+
+    def transform(self):
+        now = time.monotonic()
+        if now - self.when < 2.0:
+            return self.value
+        self.when = now
+        for path in sorted(glob("/run/user/*/hypr/*/.socket.sock"), key=os.path.getmtime, reverse=True):
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(0.1)
+                    client.connect(path)
+                    client.sendall(b"j/monitors")
+                    reply = b""
+                    while chunk := client.recv(65536):
+                        reply += chunk
+                monitors = json.loads(reply)
+                self.value = next((m["transform"] for m in monitors if m.get("name") == "DSI-1"), 0)
+                return self.value
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return self.value
+
+    def __call__(self):
+        transform = self.transform()
+        if transform == 1:
+            return {"left": ("bottom",), "right": ("top",)}
+        if transform == 3:
+            return {"left": ("top",), "right": ("bottom",)}
+        # upright or upside-down portrait: both motors are level with a horizontal swipe
+        return {"left": BOTH, "right": BOTH}
+
+
+class Daemon:
+    def __init__(self):
+        self.sel = selectors.DefaultSelector()
+        self.timers = []          # (due, seq, callback)
+        self.seq = 0
+        self.active = None        # (name, priority, token) of the running effect
+        self.token = 0
+        self.rtp = None           # thread streaming an RTP effect
+        self.last_touch = float("-inf")
+        self.sides = ScreenSides()
+        self.watchers = []
+        self.regs = {motor: {} for motor in MOTORS}        # last written SRAM attributes
+        self.busy_until = {motor: 0.0 for motor in MOTORS}
+        self.workers = {motor: queue.SimpleQueue() for motor in MOTORS}
+        for motor, jobs in self.workers.items():
+            threading.Thread(target=self.motor_worker, args=(motor, jobs), daemon=True).start()
+        self.stats = {"played": 0, "dropped": 0, "preempted": 0, "silenced": 0, "invalid": 0}
+        self.volume, self.muted = 100, False
+        self.load_settings()
+        self.wake_r, self.wake_w = os.pipe()
+        os.set_blocking(self.wake_r, False)
+        self.sel.register(self.wake_r, selectors.EVENT_READ, self.on_wake)
+
+    # --- settings -------------------------------------------------------------
+    def load_settings(self):
+        try:
+            with open(f"{STATE_DIR}/settings.json") as saved:
+                data = json.load(saved)
+            self.volume = max(0, min(100, int(data.get("volume", 100))))
+            self.muted = bool(data.get("muted", False))
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def save_settings(self):
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(f"{STATE_DIR}/settings.json.new", "w") as saved:
+                json.dump({"volume": self.volume, "muted": self.muted}, saved)
+            os.replace(f"{STATE_DIR}/settings.json.new", f"{STATE_DIR}/settings.json")
+        except OSError as error:
+            print(f"settings: {error}", file=sys.stderr)
+
+    # --- events to watchers -----------------------------------------------------
+    def emit(self, **event):
+        if not self.watchers:
+            return
+        line = (json.dumps({"t": round(time.monotonic(), 4), **event}) + "\n").encode()
+        for conn in list(self.watchers):
+            try:
+                conn.send(line, socket.MSG_DONTWAIT)
+            except OSError:
+                self.drop_client(conn)
+
+    # --- timers -------------------------------------------------------------
+    def after(self, ms, callback):
+        self.seq += 1
+        heapq.heappush(self.timers, (time.monotonic() + ms / 1000, self.seq, callback))
+
+    def run_timers(self):
+        now = time.monotonic()
+        while self.timers and self.timers[0][0] <= now:
+            _, _, callback = heapq.heappop(self.timers)
+            callback()
+        return max(0.0, self.timers[0][0] - now) if self.timers else None
+
+    # --- playback -------------------------------------------------------------
+    def charger_event(self):
+        """udev "charger" -> charge-on/off, once per real transition."""
+        now = read(CHARGER)
+        if now is None:
+            return None
+        path = f"{RUN_DIR}/charger-online"
+        before = read(path)
+        if now == before:
+            return None
+        with open(f"{path}.new", "w") as last:
+            last.write(now + "\n")
+        os.replace(f"{path}.new", path)
+        if before is None:      # the first event after boot only records the state
+            return None
+        return "charge-on" if now == "1" else "charge-off"
+
+    def request(self, line, source):
+        started = time.monotonic()
+        words = line.split()
+        if not words or len(words) > 3:
+            self.stats["invalid"] += 1
+            return "invalid"
+        name, percent, motor = words[0], 100, None
+        for word in words[1:]:
+            if word.isdigit():
+                percent = max(0, min(100, int(word)))
+            elif word in ("top", "bottom", "both"):
+                motor = BOTH if word == "both" else (word,)
+            else:
+                self.stats["invalid"] += 1
+                return "invalid"
+        if name == "charger":
+            name = self.charger_event()
+            if name is None:
+                return "ignored"
+        if name not in PRIORITY:
+            self.stats["invalid"] += 1
+            return "invalid"
+        result = self.decide(name)
+        if result == "play":
+            if name in PATTERNS:
+                self.start_pattern(name, percent, motor)
+            elif not self.start_rtp(name, percent):
+                result = "unavailable"
+        self.emit(effect=name, source=source, result=result,
+                  ms=round((time.monotonic() - started) * 1000, 2))
+        return result
+
+    def decide(self, name):
+        prio = PRIORITY[name]
+        if self.muted or self.volume == 0:
+            self.stats["silenced"] += 1
+            return "muted"
+        if prio == TOUCH and read(BACKLIGHT) not in (None, "0"):
+            self.stats["silenced"] += 1
+            return "screen-off"
+        if self.rtp and self.rtp.is_alive():
+            self.stats["dropped"] += 1
+            return "busy"
+        now = time.monotonic()
+        if self.active is not None:
+            if prio <= self.active[1]:
+                self.stats["dropped"] += 1
+                return "busy"
+            self.stats["preempted"] += 1
+            self.active = None          # the running pattern's timers see a new token
+        if prio == TOUCH:
+            if now - self.last_touch < TOUCH_GAP:
+                self.stats["dropped"] += 1
+                return "rate-limited"
+            self.last_touch = now
+        self.stats["played"] += 1
+        return "play"
+
+    def start_pattern(self, name, percent, motor):
+        pattern = PATTERNS[name]
+        if name.startswith("swipe-"):
+            sides = self.sides()
+            pattern = tuple((d, g, sides[m[0]]) for d, g, m in pattern)
+        if motor:
+            pattern = tuple((d, g, motor) for d, g, _ in pattern)
+        scale = percent * self.volume / 10000
+        pattern = tuple((d, max(1, round(g * scale)), m) for d, g, m in pattern)
+        self.token += 1
+        self.active = (name, PRIORITY[name], self.token)
+        self.step(pattern, 0, self.token)
+
+    def step(self, pattern, index, token):
+        if not self.active or self.active[2] != token:
+            return
+        _, gain, motors = pattern[index]
+        for motor in motors:
+            self.workers[motor].put(gain)
+        if index + 1 < len(pattern):
+            self.after(pattern[index + 1][0], lambda: self.step(pattern, index + 1, token))
+        else:
+            self.after(PULSE_MS, lambda: self.finish(token))
+
+    def motor_worker(self, motor, jobs):
+        """One thread per motor: the motors sit on separate I2C buses, and a
+        kernel "activate" costs 3-6 ms, so both start together, not in turn."""
+        while True:
+            gain = jobs.get()
+            if gain is None:          # an RTP stream finished: forget the registers
+                self.regs[motor].clear()
+                continue
+            try:
+                self.pulse(motor, gain)
+            except OSError as error:
+                print(f"{motor} pulse: {error}", file=sys.stderr)
+
+    def pulse(self, motor, gain):
+        """One SRAM pulse; level/index/duration only when they changed."""
+        device, cache, now = MOTORS[motor], self.regs[motor], time.monotonic()
+        if now - cache.get("at", float("-inf")) > REG_CACHE_S:
+            cache.clear()       # feedbackd and RTP also program these registers
+        if now < self.busy_until[motor]:
+            put(device, "activate", 0)
+        for attr, value in (("level", gain), ("index", WAVEFORM), ("duration", PULSE_MS)):
+            if cache.get(attr) != value:
+                put(device, attr, value)
+                cache[attr] = value
+        put(device, "activate", 1)
+        cache["at"] = now
+        self.busy_until[motor] = now + PULSE_MS / 1000
+
+    def finish(self, token):
+        if self.active and self.active[2] == token:
+            self.active = None
+
+    def start_rtp(self, name, percent):
+        data = rtp_load(name)
+        if not data:
+            return False
+        level = max(1, round(LEVEL * percent * self.volume / 10000))
+
+        def play():
+            threads = [threading.Thread(target=self.rtp_quietly, args=(dev, data, level))
+                       for dev in MOTORS.values()]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            os.write(self.wake_w, b"r")
+
+        self.rtp = threading.Thread(target=play, daemon=True)
+        self.rtp.start()
+        return True
+
+    @staticmethod
+    def rtp_quietly(device, data, level):
+        try:
+            rtp_stream(device, data, level)
+        except OSError as error:
+            print(f"{device}: {error}", file=sys.stderr)
+
+    def on_wake(self, fd):
+        try:
+            os.read(fd, 64)
+        except BlockingIOError:
+            pass
+        for jobs in self.workers.values():   # an RTP stream reprogrammed the motors
+            jobs.put(None)
+
+    # --- inputs ---------------------------------------------------------------
+    def on_fifo(self, fd, buf=bytearray()):
+        try:
+            data = os.read(fd, 4096)
+        except BlockingIOError:
+            return
+        buf.extend(data)
+        if len(buf) > 4096:      # garbage without newlines: start over
+            buf.clear()
+        while b"\n" in buf:
+            line, _, rest = buf.partition(b"\n")
+            buf[:] = rest
+            self.request(line.decode("ascii", errors="replace"), "fifo")
+
+    def on_dgram(self, sock):
+        try:
+            message = sock.recv(64)
+        except BlockingIOError:
+            return
+        self.request(message.decode("ascii", errors="replace").strip(), "socket")
+
+    def on_accept(self, listener):
+        try:
+            conn, _ = listener.accept()
+        except BlockingIOError:
+            return
+        conn.setblocking(False)
+        self.sel.register(conn, selectors.EVENT_READ, lambda c=conn: self.on_control(c))
+
+    def drop_client(self, conn):
+        if conn in self.watchers:
+            self.watchers.remove(conn)
+        try:
+            self.sel.unregister(conn)
+        except (KeyError, ValueError):
+            pass
+        conn.close()
+
+    def on_control(self, conn):
+        try:
+            data = conn.recv(256)
+        except BlockingIOError:
+            return
+        except OSError:
+            data = b""
+        if not data:
+            self.drop_client(conn)
+            return
+        words = data.decode("ascii", errors="replace").split()
+        reply, keep = self.control(words, conn)
+        try:
+            conn.send((json.dumps(reply) + "\n").encode(), socket.MSG_DONTWAIT)
+        except OSError:
+            keep = False
+        if not keep:
+            self.drop_client(conn)
+
+    def control(self, words, conn):
+        command = words[0] if words else ""
+        if command == "stats":
+            return self.status(), False
+        if command == "watch":
+            if len(self.watchers) >= WATCHERS_MAX:
+                return {"error": "too many watchers"}, False
+            self.watchers.append(conn)
+            return {"watching": True}, True
+        if command in ("mute", "unmute"):
+            self.muted = command == "mute"
+            self.save_settings()
+            return self.status(), False
+        if command == "volume" and len(words) == 2 and words[1].isdigit():
+            self.volume = max(0, min(100, int(words[1])))
+            self.save_settings()
+            return self.status(), False
+        if command == "play" and len(words) >= 2:
+            return {"result": self.request(" ".join(words[1:]), "control")}, False
+        return {"error": "usage: stats | watch | mute | unmute | volume N | play REQUEST"}, False
+
+    def status(self):
+        return {"volume": self.volume, "muted": self.muted,
+                "active": self.active[0] if self.active else ("rtp" if self.rtp and self.rtp.is_alive() else None),
+                "effects": sorted(PRIORITY), **self.stats}
+
+    # --- main loop --------------------------------------------------------------
+    def serve(self, fds):
+        for name, fd in fds.items():
+            if name == "fifo":
+                os.set_blocking(fd, False)
+                self.sel.register(fd, selectors.EVENT_READ, lambda f=fd: self.on_fifo(f))
+            elif name == "dgram":
+                sock = socket.socket(fileno=fd)
+                sock.setblocking(False)
+                self.sel.register(sock, selectors.EVENT_READ, lambda s=sock: self.on_dgram(s))
+            elif name == "control":
+                sock = socket.socket(fileno=fd)
+                sock.setblocking(False)
+                self.sel.register(sock, selectors.EVENT_READ, lambda s=sock: self.on_accept(s))
+        while True:
+            timeout = self.run_timers()
+            for key, _ in self.sel.select(timeout):
+                key.data() if key.fileobj != self.wake_r else key.data(self.wake_r)
+
+
+def listen_fds():
+    """Socket-activation fds by FileDescriptorName (fifo, dgram, control)."""
+    if os.environ.get("LISTEN_PID") != str(os.getpid()):
+        return {}
+    count = int(os.environ.get("LISTEN_FDS", "0"))
+    names = os.environ.get("LISTEN_FDNAMES", "").split(":")
+    return {names[i] if i < len(names) else str(i): 3 + i for i in range(count)}
+
+
+def main():
+    fds = listen_fds()
+    if not fds:
+        print("Start through y700-hapticd.socket", file=sys.stderr)
+        return 2
+    Daemon().serve(fds)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
