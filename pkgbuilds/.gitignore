@@ -1,0 +1,4 @@
+out/
+src/
+pkg/
+*.log
