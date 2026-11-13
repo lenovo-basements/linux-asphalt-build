@@ -79,7 +79,22 @@ doable, if you aren't stupid, it's possible by using slots B as
 - if you want to dual boot with other OS like lineage, Crdroid or whatever you want, must be installed with fastboot packages
 - if you want triple booting (eg: with unixnu or mu-silicium), you must use another method or find way to boot over sdcard
 
-* if you're using zui as main OSes, be careful as some firmware, booting to B guarantee to get you into brazil (EDL)
+## How does it works?
+
+1. first, ZUI guarantee to booted on slot A according to rawprogram.xml (EDL restore don't care if you're on A or B, it care on partition sectors, start and end byte)
+
+2. on custom rom (LineageOS, Crdroid or AOSP based rom), recovery zip (eg: zip that contain payload.bin) will always flashed on inactive slot (eg: A > B, B > A due to how [virtual A/B](https://source.android.com/docs/core/ota/virtual_ab) Works), so when you're building AOSP, do `mka updatepackages` then flash it on fastboot or fastbootd (`fastboot update *.zip`) so it'll not override inactive slot
+
+3. userdata repartition is still requires (repartition will require to format data, so backup first), or use microSD if space is limited (i'd recommend microSD that usable on nintendo switch (eg: sandisk ultra, or sandisk extreme or uhs-iii card), but still, booting full OS on microSD card is **not recommend**)
+
+Notes:
+1. if you're using zui as main OS, be careful as some firmware, booting to B guarantee to get you into brazil (EDL)
+
+2. if you fucked up, to reach EDL, do `fastboot oem edl` or plug usb cable on long port while pressing volume up to reach EDL, then use QFIL (PRC) or use lenovo software fix (ROW) to restore
+
+3. actually, there's some case where when you edl restore, it'll leave some linux image flashed on opposite slot, so always double check before you relock bootloader on zui
+
+4. **DO NOT, EVER, MODIFY ABL UNLESS YOU KNOW WHAT ARE YOU DOING**
 
 ## Issues report and AI policy
 

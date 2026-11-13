@@ -78,7 +78,22 @@ TO-DO, ไม่อยากเจอพวก report แปลกๆ ไว้�
 - ถ้าใช้ ZUI* ต้องใช้ slot B เท่านั้น เพราะ ZUI จะใช้ slot A เป็นหลัก
 - ถ้าอยาก boot ไป os อื่น (พวก unixnu หรือ windows ผ่าน mu-silicium) แนะนำให้ถาม AI หาวิธี boot ผ่าน sdcard จะดีกว่า
 
-* บางเคส ถ้าจะ dualboot กับรอมศูนย์ ระวัง​ EDL ถามหาเพราะบางเวอร์ชั่น lenovo bootloader มันหลอน
+## How does it works?
+
+1. ZUI มันไม่เหมือนหวย มันลงล็อคที่ slot A เลย (ถ้าอิงตาม rawprogram.xml มันเช็คแค่ start/end sectors)
+
+2. ถ้าจะใช้รอมโม อย่างพวก LineageOS, Crdroid อะไรพวกนี้ อย่าใช้ recovery zip (ดูง่ายๆก็ ถ้าแตกไฟล์มามี payload.bin นั่นแหล่ะ recovery) ไม่งั้นมันจะทับ slot ตรงข้าม (ตัวอย่างก็ A > B / B < A [ไปอ่านต่อในนี้](https://source.android.com/docs/core/ota/virtual_ab?hl=th)) เพราะงั้น ถ้า build เอง ให้ใช้ `mka updatepackages` แล้ว flash ตรงๆผ่าน fastboot (`fastboot update *.zip`)
+
+3. userdata ยังไงก็ต้อง repartition (format data แน่นอน เพราะงั้นถ้าเกมเยอะ ไป backup ก่อน) ถ้าไม่งั้นก็ใช้ microSD card (แนะนำให้ใช้อันที่มันใช้กับ switch 1 / 2 ได้ ไม่ก็ UHS-III แต่มันแพง) แต่เอาจริงๆ อย่าหาทำเลย มันช้า
+
+Notes:
+1. บางเคส ถ้าจะ dualboot กับรอมศูนย์ ระวัง​ EDL ถามหาเพราะบางเวอร์ชั่น lenovo bootloader มันหลอน
+
+2. ถ้าพลาด partition พัง พิมพ์ `fastboot oem edl` ใน fastboot หรือเสียบสาย usb ตรงช่องขวา (ไอที่มันเป็น 3.1) + เริ่งเสียงเพื่อเข้า EDL, แล้วใช้ QFIL (เครื่องจีน) ไม่ก็ lenovo software fix (เครื่องที่ไม่ใช่เครื่องจีนและญี่ปุ่น)
+
+3. ถ้า restore แล้วอยาก relock เช็คว่า slot A/B มันเป็น ZUI หรือเปล่า เพราะมันมีเคสที่มัน flash แค่ slot เดียว เช็คก่อน relock นะเว้ย เดี๋ยวฉิบหาย
+
+4. **หวังว่าจะไม่มีใคร modify ABL นะ หวังว่า อย่าทำเชียว**
 
 ## Issues report and AI policy
 
