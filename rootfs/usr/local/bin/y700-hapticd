@@ -17,8 +17,8 @@ Every client asks for a named effect; the daemon decides what actually plays.
             control  /run/y700-hapticd/control, stream, for y700-hapticctl:
                      stats | watch | mute | unmute | volume N | play REQUEST
   policy    one effect at a time. A higher priority (system > strong > touch)
-            preempts a running SRAM pattern; anything else is dropped, never
-            queued. Touch effects are rate limited and muted while the panel
+            preempts what is running (pattern or RTP stream); anything else is
+            dropped, never queued. Core events are system, vendor effects strong. Touch effects are rate limited and muted while the panel
             backlight is off. Volume and mute persist across restarts.
 
 Raw RTP streaming stays inside this root daemon: clients can only pick from
@@ -27,6 +27,7 @@ the fixed effect table, never send PCM that could hold a motor at full drive.
 import heapq
 import json
 import queue
+import re
 import os
 import selectors
 import socket
@@ -73,8 +74,11 @@ PATTERNS = {
 }
 
 # --- RTP waveforms ------------------------------------------------------------
-# event: (vendor file, seconds to keep or None for all, peak to scale to or None)
-RTP_EFFECTS = {
+# Semantic events -> (vendor file, seconds to keep or None, peak to scale to or None).
+# Files come from FIRMWARE (the core set shipped with linux-asphalt-build) or,
+# if installed, VENDOR: Lenovo's full RTP library, optional (see
+# install-device-support.sh --vendor-haptics). Without it only the core set exists.
+ALIASES = {
     "notify": ("159_Drip_RTP.bin", None, None),
     # Lenovo authored these two far quieter (peaks 45 and 20) than Drip (100).
     "charge-on": ("241_Pulse_RTP.bin", None, 100),
@@ -84,17 +88,22 @@ RTP_EFFECTS = {
     # The opening swell; it ends in silence at 2.1 s, the rest is a 25 s ringtone.
     "login": ("237_Legion_RTP.bin", 2.2, None),
 }
+VENDOR = os.environ.get("VENDOR", FIRMWARE + "/vendor")
 RATE = 24000
 LEVEL = 128          # PLAYCFG2 gain at 100 % volume; 0x80 is 1.0x
-MAX_SECONDS = 5
+LONG_SECONDS = 3.0   # longer (after trimming) = a haptic "ringtone"
+LONG_MAX = 30        # cap for long effects; `y700-hapticctl stop` ends them early
 CHUNK = 256
 LEAD = 1024          # the RTP FIFO is ~2 KB of SRAM; stay well under it
 STALL = 0.2          # CLOCK_BOOTTIME jump: the chip lost the stream (suspend)
+# Vendor files are padded with silence (158_Di: 1.96 s file, 0.12 s of drive).
+# Trimming matters: the motors are busy for the whole stream.
+TRIM_THRESHOLD = 0.08            # of the effect's peak
+TRIM_TAIL = int(0.04 * RATE)
 
 TOUCH, STRONG, SYSTEM = 0, 1, 2
 PRIORITY = {name: TOUCH for name in PATTERNS}
 PRIORITY.update(heavy=STRONG, error=STRONG)
-PRIORITY.update({name: SYSTEM for name in RTP_EFFECTS})
 TOUCH_GAP = 0.06     # seconds between touch effects
 WATCHERS_MAX = 8
 REG_CACHE_S = 2.0    # trust cached motor attributes this long
@@ -105,7 +114,7 @@ def put(device, name, value):
         attribute.write(f"{value}\n")
 
 
-def rtp_stream(device, data, level, clock=lambda: time.clock_gettime(time.CLOCK_BOOTTIME)):
+def rtp_stream(device, data, level, cancel, clock=lambda: time.clock_gettime(time.CLOCK_BOOTTIME)):
     put(device, "activate", 0)
     put(device, "level", level)
     put(device, "rtp_mode", 1)
@@ -114,36 +123,150 @@ def rtp_stream(device, data, level, clock=lambda: time.clock_gettime(time.CLOCK_
         try:
             start = clock()
             sent = 0
-            while sent < len(data):
+            while sent < len(data) and not cancel.is_set():
                 played = (clock() - start) * RATE
                 if played - sent > STALL * RATE:
                     return
                 if sent - played > LEAD:
-                    time.sleep(max(0.002, (sent - played - LEAD) / RATE))
+                    # wait on the cancel event, so a preempting effect starts at once
+                    cancel.wait(max(0.002, (sent - played - LEAD) / RATE))
                     continue
                 sent += os.pwrite(fd, data[sent:sent + CHUNK], 0)
-            # let the FIFO drain before leaving RTP mode
-            time.sleep(max(0.0, sent / RATE - (clock() - start)) + 0.02)
+            # let the FIFO drain before leaving RTP mode (not when cancelled)
+            cancel.wait(max(0.0, sent / RATE - (clock() - start)) + 0.02)
         finally:
             os.close(fd)
     finally:
         put(device, "rtp_mode", 0)
 
 
-def rtp_load(name):
-    path, seconds, peak = RTP_EFFECTS[name]
-    try:
-        with open(f"{FIRMWARE}/{path}", "rb") as effect:
-            data = effect.read(int(RATE * min(seconds or MAX_SECONDS, MAX_SECONDS)))
-    except OSError:
-        return None
-    if not peak:
-        return data
-    samples = [b - 256 if b > 127 else b for b in data]
-    largest = max((abs(s) for s in samples), default=0)
+# |signed 8-bit sample| per byte value, for C-speed peak/trim via translate()
+ABS = bytes(min(127, b if b < 128 else 256 - b) for b in range(256))
+
+
+def scale(data, peak):
+    """Scale 8-bit signed PCM so its largest sample reaches peak."""
+    largest = max(data.translate(ABS), default=0)
     if not largest:
         return data
-    return bytes(max(-127, min(127, round(s * peak / largest))) & 0xff for s in samples)
+    table = bytes(max(-127, min(127, round((b - 256 if b > 127 else b) * peak / largest))) & 0xff
+                  for b in range(256))
+    return data.translate(table)
+
+
+def trim(data):
+    """Drop leading/trailing silence below TRIM_THRESHOLD of the peak."""
+    mags = data.translate(ABS)
+    peak = max(mags, default=0)
+    if not peak:
+        return b""
+    thr = max(1, round(peak * TRIM_THRESHOLD))
+    loud = re.compile(b"[" + re.escape(bytes([thr])) + b"-\x7f]")
+    first = loud.search(mags).start()
+    last = len(mags) - 1 - loud.search(mags[::-1]).start()
+    return data[first:min(len(data), last + 1 + TRIM_TAIL)]
+
+
+class Effect:
+    """One RTP effect: mono ({"both": path}) or stereo ({"left": .., "right": ..})."""
+
+    def __init__(self, name, paths, seconds=None, peak=None, source="vendor"):
+        self.name, self.paths, self.seconds, self.peak, self.source = name, paths, seconds, peak, source
+        self.data = None          # {"both"|"left"|"right": trimmed bytes} once loaded
+        self.lock = threading.Lock()
+
+    @property
+    def stereo(self):
+        return "left" in self.paths
+
+    def file_seconds(self):
+        """Length before loading: the file, capped like load() caps it."""
+        try:
+            seconds = max(os.path.getsize(p) for p in self.paths.values()) / RATE
+        except OSError:
+            return 0.0
+        return min(seconds, self.seconds or LONG_MAX, LONG_MAX)
+
+    def load(self):
+        with self.lock:
+            if self.data is None:
+                cap = int(RATE * min(self.seconds or LONG_MAX, LONG_MAX))
+                data = {}
+                for side, path in self.paths.items():
+                    try:
+                        with open(path, "rb") as effect:
+                            raw = effect.read(cap)
+                    except OSError:
+                        return None
+                    raw = scale(raw, self.peak) if self.peak else raw
+                    data[side] = trim(raw)
+                if not any(data.values()):
+                    return None
+                self.data = data
+            return self.data
+
+    def length(self):
+        data = self.data
+        return max(len(d) for d in data.values()) / RATE if data else self.file_seconds()
+
+    def priority(self):
+        # Core events (notify, charge, lock ...) are system feedback and cut
+        # into anything; vendor effects, short or "ringtone" long, never block one.
+        return SYSTEM if self.source == "core" else STRONG
+
+
+VENDOR_FILE = re.compile(r"^(?:(\d+)_)?(.+?)(?:_(Left|Right))?_RTP\.bin$")
+
+
+class Catalog:
+    def __init__(self):
+        self.effects = {}
+        self.scan()
+        threading.Thread(target=self.preload, daemon=True).start()
+
+    def scan(self):
+        effects = {}
+        for name, (path, seconds, peak) in ALIASES.items():
+            for folder in (FIRMWARE, VENDOR):
+                if os.path.exists(f"{folder}/{path}"):
+                    effects[name] = Effect(name, {"both": f"{folder}/{path}"}, seconds, peak, "core")
+                    break
+        groups = {}
+        try:
+            files = sorted(os.listdir(VENDOR))
+        except OSError:
+            files = []      # no vendor library installed: core effects only
+        for file in files:
+            match = VENDOR_FILE.match(file)
+            if not match:
+                continue
+            number, base, side = match.groups()
+            groups.setdefault((number or "", base), {})[(side or "both").lower()] = f"{VENDOR}/{file}"
+        for (number, base), paths in groups.items():
+            name = base.lower().replace("_", "-")
+            if name == "haptic" and number:
+                name = f"haptic-{number}"
+            if name in effects:
+                name = f"{name}-{number}" if number else f"{name}-2"
+            if "left" in paths and "right" in paths:
+                paths = {"left": paths["left"], "right": paths["right"]}
+            else:   # a lone _Left/_Right track plays on both motors
+                paths = {"both": next(iter(paths.values()))}
+            effects[name] = Effect(name, paths)
+        self.effects = effects
+
+    def preload(self):
+        for effect in list(self.effects.values()):
+            if effect.file_seconds() <= LONG_SECONDS:
+                effect.load()
+
+    def get(self, name):
+        return self.effects.get(name)
+
+    def listing(self):
+        return [{"name": e.name, "seconds": round(e.length(), 2), "stereo": e.stereo,
+                 "long": e.length() > LONG_SECONDS, "source": e.source}
+                for e in sorted(self.effects.values(), key=lambda e: e.name)]
 
 
 def read(path):
@@ -202,6 +325,9 @@ class Daemon:
         self.last_touch = float("-inf")
         self.sides = ScreenSides()
         self.watchers = []
+        self.catalog = Catalog()
+        self.rtp_cancel = threading.Event()
+        self.rtp_prio = TOUCH
         self.regs = {motor: {} for motor in MOTORS}        # last written SRAM attributes
         self.busy_until = {motor: 0.0 for motor in MOTORS}
         self.workers = {motor: queue.SimpleQueue() for motor in MOTORS}
@@ -292,21 +418,22 @@ class Daemon:
             name = self.charger_event()
             if name is None:
                 return "ignored"
-        if name not in PRIORITY:
+        effect = None if name in PATTERNS else self.catalog.get(name)
+        if name not in PATTERNS and effect is None:
             self.stats["invalid"] += 1
             return "invalid"
-        result = self.decide(name)
+        prio = PRIORITY[name] if effect is None else effect.priority()
+        result = self.decide(prio)
         if result == "play":
-            if name in PATTERNS:
+            if effect is None:
                 self.start_pattern(name, percent, motor)
-            elif not self.start_rtp(name, percent):
+            elif not self.start_rtp(effect, prio, percent, motor):
                 result = "unavailable"
         self.emit(effect=name, source=source, result=result,
                   ms=round((time.monotonic() - started) * 1000, 2))
         return result
 
-    def decide(self, name):
-        prio = PRIORITY[name]
+    def decide(self, prio):
         if self.muted or self.volume == 0:
             self.stats["silenced"] += 1
             return "muted"
@@ -314,8 +441,11 @@ class Daemon:
             self.stats["silenced"] += 1
             return "screen-off"
         if self.rtp and self.rtp.is_alive():
-            self.stats["dropped"] += 1
-            return "busy"
+            if prio <= self.rtp_prio:
+                self.stats["dropped"] += 1
+                return "busy"
+            self.stop_rtp()             # e.g. a notification over a haptic ringtone
+            self.stats["preempted"] += 1
         now = time.monotonic()
         if self.active is not None:
             if prio <= self.active[1]:
@@ -387,15 +517,33 @@ class Daemon:
         if self.active and self.active[2] == token:
             self.active = None
 
-    def start_rtp(self, name, percent):
-        data = rtp_load(name)
+    def stop_rtp(self):
+        """Cancel a running RTP stream and wait for both motors to leave RTP mode."""
+        if self.rtp and self.rtp.is_alive():
+            self.rtp_cancel.set()
+            self.rtp.join(0.5)
+
+    def start_rtp(self, effect, prio, percent, motor):
+        data = effect.load()
         if not data:
             return False
         level = max(1, round(LEVEL * percent * self.volume / 10000))
+        sides = self.sides() if effect.stereo else None
+        if motor:                       # explicit motor: mono on that motor
+            streams = {m: data.get("left", data.get("both")) for m in motor}
+        elif sides and len(sides["left"]) == 1 and sides["left"] != sides["right"]:
+            # stereo with the screen sides on separate motors (landscape)
+            streams = {sides["left"][0]: data["left"], sides["right"][0]: data["right"]}
+        else:                           # mono, or portrait: one track on both
+            streams = {m: data.get("left", data.get("both")) for m in BOTH}
+        self.rtp_cancel = threading.Event()
+        self.rtp_prio = prio
+        cancel = self.rtp_cancel
 
         def play():
-            threads = [threading.Thread(target=self.rtp_quietly, args=(dev, data, level))
-                       for dev in MOTORS.values()]
+            threads = [threading.Thread(target=self.rtp_quietly,
+                                        args=(MOTORS[m], pcm, level, cancel))
+                       for m, pcm in streams.items()]
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -407,9 +555,9 @@ class Daemon:
         return True
 
     @staticmethod
-    def rtp_quietly(device, data, level):
+    def rtp_quietly(device, data, level, cancel):
         try:
-            rtp_stream(device, data, level)
+            rtp_stream(device, data, level, cancel)
         except OSError as error:
             print(f"{device}: {error}", file=sys.stderr)
 
@@ -497,12 +645,19 @@ class Daemon:
             return self.status(), False
         if command == "play" and len(words) >= 2:
             return {"result": self.request(" ".join(words[1:]), "control")}, False
-        return {"error": "usage: stats | watch | mute | unmute | volume N | play REQUEST"}, False
+        if command == "list":
+            return {"patterns": sorted(PATTERNS), "rtp": self.catalog.listing()}, False
+        if command == "stop":
+            self.active = None
+            self.stop_rtp()
+            return self.status(), False
+        return {"error": "usage: stats | watch | list | mute | unmute | volume N | play REQUEST | stop"}, False
 
     def status(self):
         return {"volume": self.volume, "muted": self.muted,
                 "active": self.active[0] if self.active else ("rtp" if self.rtp and self.rtp.is_alive() else None),
-                "effects": sorted(PRIORITY), **self.stats}
+                "patterns": len(PATTERNS), "rtp_effects": len(self.catalog.effects),
+                "vendor_library": os.path.isdir(VENDOR), **self.stats}
 
     # --- main loop --------------------------------------------------------------
     def serve(self, fds):

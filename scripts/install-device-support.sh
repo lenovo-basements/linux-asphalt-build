@@ -4,6 +4,7 @@ set -euo pipefail
 
 TARGET_ROOT=""
 ENABLE_SERVICES=1
+VENDOR_HAPTICS=""
 
 usage() {
     cat <<EOF
@@ -12,6 +13,10 @@ Usage: $0 [options]
 Options:
   --root <path>        Target rootfs directory (default: /)
   --no-enable-services Do not enable systemd services
+  --vendor-haptics <dir>
+                       Optional: install Lenovo's full RTP haptic library
+                       (*_RTP.bin from the device's vendor firmware) for
+                       y700-hapticd; without it only the core effects exist
   -h, --help           Show this help message
 EOF
     exit 0
@@ -26,6 +31,10 @@ while [[ $# -gt 0 ]]; do
         --no-enable-services)
             ENABLE_SERVICES=0
             shift
+            ;;
+        --vendor-haptics)
+            VENDOR_HAPTICS="$2"
+            shift 2
             ;;
         -h|--help)
             usage
@@ -169,6 +178,20 @@ install -m 644 "${REPO_DIR}/rootfs/etc/sysctl.d/"*.conf "${TARGET_ROOT}/etc/sysc
 mkdir -p "${TARGET_ROOT}/etc/tmpfiles.d"
 install -m 644 "${REPO_DIR}/rootfs/etc/tmpfiles.d/"*.conf "${TARGET_ROOT}/etc/tmpfiles.d/"
 
+# Gracefully exit if none of it exists, overwise ship it yourself.
+if [[ -n "$VENDOR_HAPTICS" ]]; then
+    shopt -s nullglob
+    rtp=("${VENDOR_HAPTICS}"/*_RTP.bin)
+    shopt -u nullglob
+    if (( ${#rtp[@]} )); then
+        mkdir -p "${TARGET_ROOT}/lib/firmware/awinic/vendor"
+        install -m 644 "${rtp[@]}" "${TARGET_ROOT}/lib/firmware/awinic/vendor/"
+        echo "Installed ${#rtp[@]} vendor haptic effects."
+    else
+        echo "Note: no *_RTP.bin in ${VENDOR_HAPTICS}; vendor haptics skipped (core effects only)." >&2
+    fi
+fi
+
 # Enable systemd services if requested
 if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
     if [[ -z "$TARGET_ROOT" ]] || [[ "$TARGET_ROOT" == "/" ]]; then
@@ -185,6 +208,7 @@ if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
         systemctl disable y700-haptic-rtp.socket 2>/dev/null || true  # replaced by y700-hapticd
         systemctl enable y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket 2>/dev/null || true
         systemctl enable tuned.service tuned-ppd.service 2>/dev/null || true
+        systemctl try-restart y700-hapticd.service 2>/dev/null || true  # rescan effects
         udevadm control --reload 2>/dev/null || true
         udevadm trigger 2>/dev/null || true
     else

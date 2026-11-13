@@ -37,7 +37,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration (same behaviour as stock ZUI) |
 | **UFS** | Working. Limited to HS-GEAR4 (Rate A) because of the UFS hardware itself |
 | **Iris (VPU)** | Hardware accelerated on V4L2. VA-API needs [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) |
-| **Haptics** | AW86927 — upstream + small dual-haptics changes. Currently 7 SRAM firmwares loaded; plan to push all 138 RTP effects later |
+| **Haptics** | AW86927 — upstream + small dual-haptics changes. rootfs only shipped 7 SRAM firmwares; other 131 haptics firmware are now working, and optional (you much ship firmware yourself) delay is vary between 1ms <> 5ms mesaure by median latency (4 i2c transfers) |
 | **Sensors** | Auto-brightness, lid-cover suspend, gyroscope. CDSP / SDSP / ADSP working |
 | **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working |
 | **Charging** | Bypass charging works (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |

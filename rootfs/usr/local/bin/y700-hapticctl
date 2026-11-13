@@ -6,6 +6,9 @@
   y700-hapticctl mute | unmute
   y700-hapticctl volume 0-100
   y700-hapticctl play NAME [PERCENT] [top|bottom|both]
+  y700-hapticctl list                  every effect: pulse patterns, RTP effects
+                                       (seconds after trimming, stereo, long)
+  y700-hapticctl stop                  end whatever is playing (e.g. a long one)
 """
 import json
 import socket
@@ -24,6 +27,13 @@ def main(argv):
         client.sendall(" ".join(argv[1:]).encode())
         stream = client.makefile("r")
         first = json.loads(stream.readline() or "{}")
+        if argv[1] == "list" and "rtp" in first:
+            print("patterns:", " ".join(first["patterns"]))
+            for e in first["rtp"]:
+                tags = " ".join(t for t, on in (("stereo", e["stereo"]), ("long", e["long"]),
+                                                (e["source"], e["source"] == "core")) if on)
+                print(f"  {e['name']:<28} {e['seconds']:6.2f} s  {tags}")
+            return 0
         if argv[1] != "watch" or "error" in first:
             print(json.dumps(first, indent=2))
             return 1 if "error" in first else 0
