@@ -1,0 +1,14 @@
+[Unit]
+Description=Mount microSD partition %i
+BindsTo=dev-%i.device
+After=dev-%i.device
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/y700-microsd mount %i
+ExecStop=/usr/local/bin/y700-microsd unmount %i
+TimeoutStartSec=10min

@@ -1,0 +1,115 @@
+#!/bin/bash
+set -uo pipefail
+
+CONF=/etc/y700-microsd.conf
+STATE=/run/y700-microsd
+MICROSD_USER=""
+MICROSD_MOUNT=/mnt/microsd
+# shellcheck source=/dev/null
+[[ -r $CONF ]] && . "$CONF"
+
+log() { echo "y700-microsd: $*"; }
+die() { log "$*"; exit 1; }
+
+[[ $# -eq 2 ]] || die "usage: $0 mount|unmount <device name>"
+action=$1
+name=${2##*/}
+[[ $name =~ ^[A-Za-z0-9_.-]+$ ]] || die "bad device name '$2'"
+dev=/dev/$name
+
+mkdir -p "$STATE"
+exec 9>"$STATE/.lock"
+flock 9
+
+owner_ids() {
+	local u=$MICROSD_USER
+	if [[ -z $u ]]; then
+		u=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }')
+	fi
+	[[ -n $u ]] && id -u "$u" >/dev/null 2>&1 || return 1
+	echo "uid=$(id -u "$u"),gid=$(id -g "$u")"
+}
+
+# best-effort repair; never refuse to mount over it
+check_fs() {
+	local rc=0
+
+	case $1 in
+	ext2|ext3|ext4)
+		e2fsck -p "$dev" || rc=$?
+		;;
+	exfat)
+		command -v fsck.exfat >/dev/null && { fsck.exfat -p "$dev" || rc=$?; }
+		;;
+	vfat)
+		command -v fsck.vfat >/dev/null && { fsck.vfat -a "$dev" || rc=$?; }
+		;;
+	esac
+	# fsck exit codes: 1 = fixed, >= 4 = errors left
+	((rc >= 4)) && log "$dev: $1 check left errors (rc $rc), mounting anyway"
+	return 0
+}
+
+do_mount() {
+	local fstype opts ids target
+
+	[[ -b $dev ]] || die "$dev is not a block device"
+	if [[ -e $STATE/$name ]] && findmnt -rn -S "$dev" >/dev/null; then
+		log "$dev already mounted at $(<"$STATE/$name")"
+		return 0
+	fi
+
+	fstype=$(blkid -o value -s TYPE "$dev") || die "$dev: no filesystem"
+	# x-gvfs-show: libmount keeps it in utab, so GNOME Files / gvfs list
+	# the card even though it is mounted outside /media and /run/media
+	opts=noatime,nosuid,nodev,x-gvfs-show
+	case $fstype in
+	exfat|vfat|ntfs|ntfs3)
+		ids=$(owner_ids) || die "no owner user (set MICROSD_USER in $CONF)"
+		opts+=",exec,$ids,umask=022"
+		case $fstype in
+		exfat) opts+=",iocharset=utf8,errors=remount-ro" ;;
+		vfat)  opts+=",utf8,shortname=mixed,errors=remount-ro" ;;
+		*)     fstype=ntfs3 ;;
+		esac
+		;;
+	ext2|ext3|ext4|f2fs|btrfs)
+		;;
+	*)
+		die "$dev: unsupported filesystem '$fstype'"
+		;;
+	esac
+
+	target=$MICROSD_MOUNT
+	if findmnt -rn "$target" >/dev/null; then
+		target=$MICROSD_MOUNT-$name
+	fi
+
+	check_fs "$fstype"
+	mkdir -p "$target" || die "cannot create $target"
+	mount -t "$fstype" -o "$opts" "$dev" "$target" || die "mount $dev on $target failed"
+	echo "$target" >"$STATE/$name"
+	log "$dev ($fstype) mounted at $target"
+}
+
+do_unmount() {
+	local target
+
+	[[ -r $STATE/$name ]] || return 0
+	target=$(<"$STATE/$name")
+	if findmnt -rn "$target" >/dev/null; then
+		# a pulled card can't be unmounted cleanly; detach it lazily then
+		umount "$target" 2>/dev/null || umount -l "$target" ||
+			die "cannot unmount $target"
+	fi
+	rm -f "$STATE/$name"
+	# drop the empty mount point so nothing writes to the root fs by mistake
+	rmdir "$target" 2>/dev/null
+	log "$dev unmounted from $target"
+}
+
+case $action in
+mount)   do_mount ;;
+unmount) do_unmount ;;
+*)       die "unknown action '$action'" ;;
+esac

@@ -102,7 +102,7 @@ echo "=== [1/8] Installing packages into target rootfs ==="
 CORE_PKGS=(
     base base-devel sudo networkmanager i2c-tools
     zsh bash fish nano vim git htop wget curl
-    parted e2fsprogs f2fs-tools dosfstools
+    parted e2fsprogs f2fs-tools dosfstools exfatprogs
     linux-firmware wireless-regdb iw
     bluez bluez-utils
     mesa vulkan-freedreno
@@ -200,6 +200,10 @@ chmod 440 "${TARGET_ROOT}/etc/sudoers.d/00-wheel-nopasswd"
 # Default password is the username (Arch Linux ARM convention); change it.
 echo "${USERNAME}:${PASSWORD:-$USERNAME}" | chroot "$TARGET_ROOT" chpasswd
 echo "root:root" | chroot "$TARGET_ROOT" chpasswd
+
+# microSD cards mount at /mnt/microsd (89-y700-microsd.rules); FAT/exFAT
+# files belong to the primary user.
+printf 'MICROSD_USER=%s\n' "$USERNAME" > "${TARGET_ROOT}/etc/y700-microsd.conf"
 
 echo "=== [5/8] Configuring GDM, Auto-Login & On-Screen Keyboard ==="
 if [[ "$ENABLE_GNOME" -eq 1 ]]; then

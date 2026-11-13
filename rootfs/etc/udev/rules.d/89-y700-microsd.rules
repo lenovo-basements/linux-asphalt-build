@@ -1,0 +1,14 @@
+ACTION!="add|change", GOTO="y700_microsd_end"
+SUBSYSTEM!="block", GOTO="y700_microsd_end"
+ENV{ID_PATH}!="platform-8804000.mmc", GOTO="y700_microsd_end"
+ENV{ID_FS_USAGE}!="filesystem", GOTO="y700_microsd_end"
+# EFI system partitions (GPT and MBR type 0xef) are not data
+ENV{ID_PART_ENTRY_TYPE}=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b", GOTO="y700_microsd_end"
+ENV{ID_PART_ENTRY_TYPE}=="0xef", GOTO="y700_microsd_end"
+
+# Stay visible to udisks (file manager sidebars) but never let the desktop
+# automounter grab it first; the label-independent name is for the sidebar.
+ENV{UDISKS_AUTO}="0", ENV{UDISKS_NAME}="microSD"
+TAG+="systemd", ENV{SYSTEMD_WANTS}+="y700-microsd@%k.service"
+
+LABEL="y700_microsd_end"
