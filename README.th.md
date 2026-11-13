@@ -55,6 +55,7 @@
 | Component | Notes |
 | --- | --- |
 | **WIFI** | ath11k เจอปัญหา D3cold พัง แล้วเป็นแค่กับ lenovo ด้วยนะ ไปอ่านเอาใน [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) เพราะรายละเอียดมันหนามาก|
+| **Browser** | youtube ambient mode แม่งส้นตีนมากๆ แม่งทำ zero-copy พังหมด (YUV มันต้องแปลงแล้วก็คัดไป RGBA canvas cross-fade มันเลยพัง เพราะงั้นมันเลย render ที่่ 144hz อย่างเดียว VRR มันใช้ไม่ได้) อย่าหาเปิดเชียว นอกจากจะต่อจอนอก (เทสแล้ว 2.71w (SDR) / 2.8 (HDR) ถ้าไม่ได้เปิด แต่ถ้าเปิด หวานเจี๊ยบ กินไปเต็มๆ 33w (บางทีก็ 35w) |
 
 ## Relock bootloader
 
