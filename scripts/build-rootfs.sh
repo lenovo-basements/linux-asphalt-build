@@ -106,7 +106,7 @@ CORE_PKGS=(
     linux-firmware wireless-regdb iw
     bluez bluez-utils
     mesa vulkan-freedreno
-    pipewire pipewire-pulse pipewire-alsa pipewire-libcamera wireplumber rtkit alsa-utils alsa-ucm-conf libcamera
+    pipewire pipewire-pulse pipewire-alsa pipewire-libcamera wireplumber rtkit alsa-utils alsa-ucm-conf libcamera v4l-utils
     iio-sensor-proxy upower tuned tuned-ppd zram-generator brightnessctl noto-fonts-cjk
     otf-ipafont otf-ipaexfont
 )
@@ -148,6 +148,20 @@ else
     chroot "$TARGET_ROOT" pacman-key --init
     chroot "$TARGET_ROOT" pacman-key --populate archlinuxarm
     chroot "$TARGET_ROOT" pacman -Syu --noconfirm --needed "${ALL_PKGS[@]}"
+fi
+
+LOCAL_PKGS=()
+shopt -s nullglob
+for pkg in "${REPO_DIR}/pkgbuilds/out/"*.pkg.tar.*; do
+    [[ $pkg == *.sig ]] || LOCAL_PKGS+=("$pkg")
+done
+shopt -u nullglob
+if [[ ${#LOCAL_PKGS[@]} -gt 0 ]]; then
+    echo "Installing ${#LOCAL_PKGS[@]} local package(s) from pkgbuilds/out/..."
+    mkdir -p "${TARGET_ROOT}/var/cache/asphalt-pkgs"
+    cp "${LOCAL_PKGS[@]}" "${TARGET_ROOT}/var/cache/asphalt-pkgs/"
+    chroot "$TARGET_ROOT" sh -c 'pacman -U --noconfirm /var/cache/asphalt-pkgs/*.pkg.tar.*'
+    rm -rf "${TARGET_ROOT}/var/cache/asphalt-pkgs"
 fi
 
 # Account tools must retain their package setuid bits when extracting/copying

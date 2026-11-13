@@ -47,7 +47,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 
 | Component | Notes |
 | --- | --- |
-| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR only working on mpv for now |
+| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR is now supported on hyprland only for now. |
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom |
 | **Stylus** | AP500U / AP501U and Precision Pen 2. which i don’t have (AP501U should arrives monday or tuesday) |
 
