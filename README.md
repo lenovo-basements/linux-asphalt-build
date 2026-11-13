@@ -33,8 +33,8 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **microSD** | Tested with SanDisk Ultra (A1) |
 | **Touch** | Novatek NT36523n — upstream + device-specific changes |
 | **Fuel gauge** | Basic battery report + charging via upstream code |
-| **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera|
-| **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration (same behaviour as stock ZUI) |
+| **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera and `gc02m1` for NEC (need confirmation)|
+| **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration. usb on y700 (pretty much all generations) have usb port priority, more info on [port priority](/docs/port_priority.md) |
 | **UFS** | Working. Limited to HS-GEAR4 (Rate A) because of the UFS hardware itself |
 | **Iris (VPU)** | Hardware accelerated on V4L2. VA-API needs [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) |
 | **Haptics** | AW86927 — upstream + small dual-haptics changes. rootfs only shipped 7 SRAM firmwares; other 131 haptics firmware are now working, and optional (you much ship firmware yourself) delay is vary between 1ms <> 5ms mesaure by median latency (4 i2c transfers) |
