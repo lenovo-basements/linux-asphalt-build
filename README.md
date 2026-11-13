@@ -19,6 +19,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 - [What’s working](#whats-working)
 - [Building (kernel + packaging)](scripts/kernel/README.md)
 - [Relock bootloader](#relock-bootloader)
+- <a href="/docs/camera.md">the rant: camera</a>
 
 ## What’s working
 
@@ -32,7 +33,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **microSD** | Tested with SanDisk Ultra (A1) |
 | **Touch** | Novatek NT36523n — upstream + device-specific changes |
 | **Fuel gauge** | Basic battery report + charging via upstream code |
-| **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) |
+| **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera|
 | **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration (same behaviour as stock ZUI) |
 | **UFS** | Working. Limited to HS-GEAR4 (Rate A) because of the UFS hardware itself |
 | **Iris (VPU)** | Hardware accelerated on V4L2. VA-API needs [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) |
@@ -46,9 +47,9 @@ Scripts and device support for running **Arch Linux ARM** on the
 
 | Component | Notes |
 | --- | --- |
-| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR is on the TO-DO list |
+| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR only working on mpv for now |
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom |
-| **Stylus** | AP500U / AP501U and Precision Pen 2. which i don’t have |
+| **Stylus** | AP500U / AP501U and Precision Pen 2. which i don’t have (AP501U should arrives monday or tuesday) |
 
 ## Technical notes
 | Component | Notes |

@@ -19,6 +19,7 @@
 - [What’s working](#whats-working)
 - [Building (kernel + packaging)](scripts/kernel/README.md) (ไม่มีภาษาไทย ขี้เกียจเขียน)
 - [Relock bootloader](#relock-bootloader)
+- <a href="/docs/camera.th.md">แชท อยากระบายเรื่องกล้องรุ่นนี้ว่ะ</a>
 
 ## What’s working
 
@@ -32,7 +33,7 @@
 | **microSD** | ความเร็วไม่ได้แย่นะ ลองกับ SanDisk Ultra (A1) มันก็พอได้อยู่อะ|
 | **ทัชสกรีน** | Novatek NT36523n — upstream + โค้ดฝั่ง lenovo นิดหน่อย สำหรับสไตลัส |
 | **Fuel gauge** | พวก % แบตเตอรี่กับชาร์จเร็วใช้โค้ด upstream หมด, lenovo ใช้โค้ด qcom หมดเลยไม่ต้องอะไรเยอะ |
-| **กล้อง** | ROW กับ PRC ใช้กล้องคนละชุดกัน อันนี้ของ ROW (`ov13b10`, `s5k4h7`, `sc202cs`) ถ้าใช้ PRC (เครื่องจีน)... โชคดี bro|
+| **กล้อง** | ROW กับ PRC ใช้กล้องคนละชุดกัน อันนี้ของ ROW (`ov13b10`, `s5k4h7`, `sc202cs`) ถ้าใช้ NEC (เครื่องญี่ปุ่น)... โชคดี bro ถ้าใช้เครื่อง PRC ก็โชคดีเช่นกัน กล้องแม่งคนละตัวเลย|
 | **USB** | ใช้ได้หมดทั้ง 2 พอร์ตอะ รวมถึงต่ออกจอได้ (เหมือนรอมศูนย์เป๊ะ) |
 | **UFS** | ใช้ได้ ติดแค่มันสุดได้แค่ HS-GEAR4 (Rate A) เพราะ UFS มันได้แค่นี้ ทำไงได้ |
 | **Iris (VPU)** | ผ่าน V4L2. ถ้าจะใช้ VA-API (มึงใช้ brave) ต้องใช้ [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) แทน |
@@ -46,9 +47,9 @@
 
 | Component | Notes |
 | --- | --- |
-| **HDR** | จอนอกที่มีไม่รับ HDR (DHI-PM19-S201S) จอในไว้ก่อน ขี้เกียจ |
+| **HDR** | จอนอกที่มีไม่รับ HDR (DHI-PM19-S201S) จอในใช้ได้แค่ใน mpv |
 | **AV1** | ไปด่า qcom ว่าทำไมมึงไม่ใส่ hardware acceleration มาให้ เพราะงั้นอย่าหาเปิด AV1 เด็ดขาด |
-| **Stylus** | AP500U / AP501U / Precision Pen 2. ไม่มีติดตัวสักอัน เลยซัพพอร์ตไม่ได้ |
+| **Stylus** | AP500U / AP501U / Precision Pen 2. ไม่มีติดตัวสักอัน เลยซัพพอร์ตไม่ได้ (ถ้าไม่มีไรติดขัด จันทร์ไม่ก็อังคารนี้น่าจะเริ่มละ) |
 
 ## Technical notes
 | Component | Notes |
