@@ -144,6 +144,11 @@ if [[ -d "${REPO_DIR}/rootfs/etc/wireplumber" ]]; then
     install -m 644 "${REPO_DIR}/rootfs/etc/wireplumber/wireplumber.conf.d/"*.conf "${TARGET_ROOT}/etc/wireplumber/wireplumber.conf.d/"
 fi
 
+# libcamera soft-IPA tuning (CCMs from the vendor CamX tuning). libcamera searches
+# /etc/libcamera/ipa before /usr/share/libcamera/ipa, so package files stay untouched.
+mkdir -p "${TARGET_ROOT}/etc/libcamera/ipa/simple"
+install -m 644 "${REPO_DIR}/rootfs/etc/libcamera/ipa/simple/"*.yaml "${TARGET_ROOT}/etc/libcamera/ipa/simple/"
+
 # Stock signed VPU firmware (Iris), kept in the sibling asphalt-firmware repo.
 # The explicit 2.4 name selects its firmware descriptor; the old name is kept
 # for kernels predating that descriptor.
