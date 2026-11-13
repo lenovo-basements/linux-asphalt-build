@@ -1,0 +1,6 @@
+# ov13b10 (rear main): mainline defaults digital gain to 2.5x (0x350a-c = 0x0a00).
+# libcamera's AE only drives exposure + analogue gain, so that 2.5x is applied on
+# top of every frame: read noise x2.3 for no SNR gain, and raw clips at ~448/1023
+# of sensor output. CamX runs this sensor at 1x (350a=01 350b=00 350c=00).
+# The driver caches the value while powered off and replays it on stream start.
+ACTION=="add", SUBSYSTEM=="video4linux", KERNEL=="v4l-subdev*", ATTR{name}=="ov13b10 *", RUN+="/usr/bin/v4l2-ctl -d $devnode -c digital_gain=1024"

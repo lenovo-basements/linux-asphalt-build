@@ -1,0 +1,69 @@
+From 2b3cae57dbc350bd3761925287126547d043c33b Mon Sep 17 00:00:00 2001
+From: lolipuru <banstellazz@gmail.com>
+Date: Fri, 13 Nov 2026 06:59:27 +0700
+Subject: [PATCH] libipa: camera_sensor_helper: Add SC202CS helper and sensor
+ properties
+
+Add a camera sensor helper and sensor properties for the SmartSens
+SC202CS, a 2MP 1.75um sensor (used e.g. as the rear macro camera of the
+Lenovo Legion Y700 Gen 2).
+
+The kernel driver exposes the analogue gain in 1/128 steps (128 = 1x) and
+splits it into the sensor's power-of-two coarse gain and its fine gain, so
+the gain model is linear, code / 128. The black level is 65 at 10 bits: a
+raw RAW10 frame with the lens covered has a median of 65 and per Bayer
+phase means of 65.05 to 65.07.
+
+Assisted-by: LLM
+Signed-off-by: lolipuru <banstellazz@gmail.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp          | 16 ++++++++++++++++
+ .../sensor/camera_sensor_properties.cpp          |  5 +++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index f77ef38..86a0798 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -853,6 +853,22 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("s5k4h7", CameraSensorHelperS5k4h7)
+ 
++class CameraSensorHelperSc202cs : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperSc202cs()
++	{
++		/* Black level of 65 at 10 bits */
++		blackLevel_ = 4160;
++		/*
++		 * The driver exposes the gain in 1/128 steps (128 = 1x) and
++		 * splits it into the coarse (1x..16x) and fine gain registers.
++		 */
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 128 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("sc202cs", CameraSensorHelperSc202cs)
++
+ class CameraSensorHelperVd55g1 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index 3dceea5..5fc6b3a 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -528,6 +528,11 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 			},
+ 			.sensorDelays = { },
+ 		} },
++		{ "sc202cs", {
++			.unitCellSize = { 1750, 1750 },
++			.testPatternModes = {},
++			.sensorDelays = { },
++		} },
+ 		{ "vd55g1", {
+ 			.unitCellSize = { 2160, 2160 },
+ 			.testPatternModes = {
+-- 
+2.56.0
+
