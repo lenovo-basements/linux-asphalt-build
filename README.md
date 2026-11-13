@@ -16,6 +16,8 @@ Scripts and device support for running **Arch Linux ARM** on the
 
 ## Resources
 
+- [Kernel source](https://github.com/lenovo-basements/lenovo-sm8475-mainline)
+- [Firmware repo](https://github.com/lenovo-basements/asphalt-firmware)
 - [What’s working](#whats-working)
 - [Building (kernel + packaging)](scripts/kernel/README.md)
 - [Relock bootloader](#relock-bootloader)

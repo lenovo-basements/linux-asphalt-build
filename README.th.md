@@ -16,6 +16,8 @@
 
 ## Resources
 
+- [Kernel source](https://github.com/lenovo-basements/lenovo-sm8475-mainline)
+- [Firmware repo](https://github.com/lenovo-basements/asphalt-firmware)
 - [What’s working](#whats-working)
 - [Building (kernel + packaging)](scripts/kernel/README.md) (ไม่มีภาษาไทย ขี้เกียจเขียน)
 - [Relock bootloader](#relock-bootloader)
