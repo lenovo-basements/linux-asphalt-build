@@ -103,3 +103,14 @@ Notes:
 
 - i **don't** give a fuck on AI involved as this start as personal project.
 - however, any report that use LLM assisted must be test and validated from user first, and must be able to answer my question if i doubt on the methods, any issue or PR with LLM assisted straight from ass without test and validated from user **will be closed immediately** 
+
+## License
+Original code and scripts developed for this project are licensed under the GNU General Public License version 2.0 only (GPL-2.0-only), unless otherwise specified.
+
+See LICENSE for the full GPL-2.0 license text.
+
+Firmware provided by Qualcomm and Lenovo is proprietary and is not covered by this project's GPL-2.0 license.
+
+All rights to such firmware remain with their respective copyright holders. These firmware files are subject to their original licensing and redistribution terms.
+
+This project does not claim ownership of any proprietary firmware.
