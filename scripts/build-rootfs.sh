@@ -5,7 +5,7 @@ set -euo pipefail
 TARGET_ROOT=""
 USERNAME="alarm"
 PASSWORD=""
-HOSTNAME="y700"
+HOSTNAME="asphalt"
 TARBALL_PATH=""
 DESKTOP="none"
 ENABLE_AUTOLOGIN=1
@@ -23,7 +23,7 @@ Options:
   --target <path>        Target rootfs mount directory (Required)
   --user <username>      Primary user to create (default: alarm, as on Arch Linux ARM)
   --password <password>  Password for that user (default: same as the username)
-  --hostname <name>      System hostname (default: y700)
+  --hostname <name>      System hostname (default: asphalt)
   --tarball <path>       Path to existing ArchLinuxARM-aarch64-latest.tar.gz
   --firmware-dir <path>  Path to asphalt-firmware repository
   --desktop <name>       none (default: console login on tty1, no desktop),
@@ -140,7 +140,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [[ -z "$FIRMWARE_SRC" ]]; then
     if [[ -d "${REPO_DIR}/../asphalt-firmware" ]]; then
         FIRMWARE_SRC="$(cd "${REPO_DIR}/../asphalt-firmware" && pwd)"
-    elif [[ -d "/lib/firmware/qcom/lenovo/tb320fc" ]]; then
+    elif [[ -d "/lib/firmware/qcom/lenovo/asphalt" ]]; then
         FIRMWARE_SRC="/lib/firmware"
     fi
 fi
@@ -278,9 +278,9 @@ chmod 440 "${TARGET_ROOT}/etc/sudoers.d/00-wheel-nopasswd"
 echo "${USERNAME}:${PASSWORD:-$USERNAME}" | "${CHROOT[@]}" "$TARGET_ROOT" chpasswd
 echo "root:root" | "${CHROOT[@]}" "$TARGET_ROOT" chpasswd
 
-# microSD cards mount at /mnt/microsd (89-y700-microsd.rules); FAT/exFAT
+# microSD cards mount at /mnt/microsd (89-asphalt-microsd.rules); FAT/exFAT
 # files belong to the primary user.
-printf 'MICROSD_USER=%s\n' "$USERNAME" > "${TARGET_ROOT}/etc/y700-microsd.conf"
+printf 'MICROSD_USER=%s\n' "$USERNAME" > "${TARGET_ROOT}/etc/asphalt-microsd.conf"
 
 echo "=== [5/8] Configuring services, desktop & login ==="
 # Every image needs these, whatever the desktop.
@@ -332,7 +332,7 @@ if [[ "$ENABLE_GNOME" -eq 1 ]]; then
         echo "Configuring automatic login for '$USERNAME'..."
         mkdir -p "${TARGET_ROOT}/etc/gdm"
         cat <<EOF > "${TARGET_ROOT}/etc/gdm/custom.conf"
-# GDM configuration for Lenovo Legion Y700 (TB320FC)
+# GDM configuration for Lenovo Legion Y700 Gen 2 (asphalt)
 [daemon]
 AutomaticLoginEnable=True
 AutomaticLogin=${USERNAME}
@@ -370,7 +370,7 @@ EOF
 screen-keyboard-enabled=true
 
 [org/gnome/shell]
-enabled-extensions=['y700-haptics@lenovo.local']
+enabled-extensions=['asphalt-haptics@lenovo.local']
 
 [org/gnome/mutter]
 auto-maximize=true
@@ -403,7 +403,7 @@ elif [[ -n "$FIRMWARE_SRC" && -d "$FIRMWARE_SRC" ]]; then
     echo "Installing device-specific firmware from $FIRMWARE_SRC..."
     mkdir -p "${TARGET_ROOT}/lib/firmware"
     
-    # Copy TB320FC firmware components
+    # Copy asphalt firmware components
     for comp in ath11k cirrus novatek qca qcom awinic; do
         if [[ -d "${FIRMWARE_SRC}/${comp}" ]]; then
             mkdir -p "${TARGET_ROOT}/lib/firmware/${comp}"
@@ -428,16 +428,16 @@ fi
 cat <<EOF > "${TARGET_ROOT}/etc/fstab"
 # /etc/fstab: static file system information
 # <file system>             <mount point>  <type>  <options>       <dump>  <pass>
-LABEL=y700-arch             /              ext4    rw,noatime,x-systemd.growfs 0 1
+LABEL=asphalt-arch             /              ext4    rw,noatime,x-systemd.growfs 0 1
 # Factory sensor calibration is copied into /var/lib on first sensor startup.
 /dev/disk/by-partlabel/persist /mnt/persist  ext4    ro,nofail       0       0
 EOF
 MICROSD_UID=$("${CHROOT[@]}" "$TARGET_ROOT" id -u "$USERNAME")
 MICROSD_GID=$("${CHROOT[@]}" "$TARGET_ROOT" id -g "$USERNAME")
 # File-manager re-mounts (udisks) follow this line to the microSD service's
-# path; the symlink comes from 89-y700-microsd.rules (FAT-family cards only,
+# path; the symlink comes from 89-asphalt-microsd.rules (FAT-family cards only,
 # the line carries uid/gid).
-printf '/dev/disk/y700-microsd      /mnt/microsd   auto    noauto,nofail,noatime,nosuid,nodev,exec,uid=%s,gid=%s,umask=022,x-gvfs-show 0 0\n' \
+printf '/dev/disk/asphalt-microsd      /mnt/microsd   auto    noauto,nofail,noatime,nosuid,nodev,exec,uid=%s,gid=%s,umask=022,x-gvfs-show 0 0\n' \
     "$MICROSD_UID" "$MICROSD_GID" >> "${TARGET_ROOT}/etc/fstab"
 
 echo ""

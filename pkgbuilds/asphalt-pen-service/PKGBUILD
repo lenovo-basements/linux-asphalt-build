@@ -1,4 +1,4 @@
-# Pen mode for the TB320FC touchscreen: switches the NT36523N to pen mode
+# Pen mode for the asphalt touchscreen: switches the NT36523N to pen mode
 # while a Bluetooth pen is connected (udev + asphalt-pen).
 #
 #   ASPHALT_PEN_DIR=/path/to/asphalt-pen-service makepkg -f

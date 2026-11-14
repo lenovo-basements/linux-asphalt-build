@@ -1,8 +1,8 @@
 [Unit]
 Description=Server for FastRPC remote procedure calls from Qualcomm SDSP
 ConditionPathExists=/dev/fastrpc-sdsp
-Requires=y700-sensor-registry.service
-After=pd-mapper.service y700-sensor-registry.service
+Requires=asphalt-sensor-registry.service
+After=pd-mapper.service asphalt-sensor-registry.service
 
 [Service]
 ExecStart=/usr/local/bin/hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -s

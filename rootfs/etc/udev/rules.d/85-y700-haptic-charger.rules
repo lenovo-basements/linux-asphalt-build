@@ -1,2 +1,0 @@
-# plays only on a real transition.
-SUBSYSTEM=="power_supply", KERNEL=="qcom-battmgr-usb", ACTION=="change", RUN+="/usr/local/bin/y700-haptic-event charger"

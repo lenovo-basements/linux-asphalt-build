@@ -1,0 +1,16 @@
+[Unit]
+Description=Y700 haptics broker (owns both AW86927 motors)
+Requires=asphalt-hapticd.socket asphalt-hapticd-fifo.socket asphalt-hapticd-control.socket
+After=asphalt-hapticd.socket asphalt-hapticd-fifo.socket asphalt-hapticd-control.socket
+
+[Service]
+Type=simple
+Sockets=asphalt-hapticd.socket asphalt-hapticd-fifo.socket asphalt-hapticd-control.socket
+ExecStart=/usr/local/bin/asphalt-hapticd
+# stays resident: a gesture must never wait for Python to start
+Restart=on-failure
+StateDirectory=asphalt-hapticd
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/run/asphalt-hapticd /sys

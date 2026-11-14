@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore Y700 display after the desktop session has thawed
+After=systemd-suspend.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/asphalt-wake-display
+ExecStartPost=-/usr/bin/systemctl --no-block stop asphalt-resume-guard.service
+TimeoutStartSec=10

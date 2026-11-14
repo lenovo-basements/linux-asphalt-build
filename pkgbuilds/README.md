@@ -1,6 +1,6 @@
 # Device packages
 
-Everything the TB320FC needs beyond stock Arch Linux ARM, as pacman packages: nothing is
+Everything asphalt (Legion Y700 Gen 2) needs beyond stock Arch Linux ARM, as pacman packages: nothing is
 hand-copied into `/usr/local` or `/etc`. `scripts/build-rootfs.sh` installs every
 `out/*.pkg.tar.*` into the image with `pacman -U` after the stock packages; on a running
 system `pacman -U out/*.pkg.tar.*` updates them.
@@ -29,7 +29,7 @@ Notes:
 - **Services aren't enabled on install** (Arch convention). The image enables the set in
   `/usr/lib/systemd/system-preset/80-asphalt.preset`; on an existing system run the
   `systemctl preset ...` line the package prints.
-- **tuned-ppd** only reads `/etc/tuned/ppd.conf`, which belongs to `tuned-ppd`: the y700
+- **tuned-ppd** only reads `/etc/tuned/ppd.conf`, which belongs to `tuned-ppd`: the asphalt
   mapping ships as `/usr/share/asphalt/tuned-ppd.conf`; build-rootfs copies it over.
 - **hyprgrass depends on the exact `hyprland` version it was built with**, so pacman refuses
   a Hyprland update until hyprgrass is rebuilt (`build-packages.sh hyprgrass`, then update

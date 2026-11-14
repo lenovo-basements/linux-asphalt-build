@@ -2,7 +2,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #define O_LARGEFILE 0
-static inline ssize_t tb320fc_copy_file_range(int in_fd, off_t *in_offset,
+static inline ssize_t asphalt_copy_file_range(int in_fd, off_t *in_offset,
                                             int out_fd, off_t *out_offset,
                                             size_t length, unsigned int flags)
 {
@@ -11,4 +11,4 @@ static inline ssize_t tb320fc_copy_file_range(int in_fd, off_t *in_offset,
     errno = ENOSYS;
     return -1;
 }
-#define copy_file_range tb320fc_copy_file_range
+#define copy_file_range asphalt_copy_file_range

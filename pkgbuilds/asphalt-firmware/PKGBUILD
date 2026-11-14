@@ -1,4 +1,4 @@
-# Device firmware for the Lenovo Legion Y700 Gen 2 (TB320FC), from the sibling
+# Device firmware for the Lenovo Legion Y700 Gen 2 (asphalt), from the sibling
 # asphalt-firmware repository: GPU (sqe/gmu/zap), Iris VPU, DSPs, ath11k
 # WCN6855, QCA BT, Cirrus amps, Novatek touch, Awinic haptics (including the
 # RTP effects), plus the stock SSC sensor configs hexagonrpcd/sensh read.
@@ -9,7 +9,7 @@
 pkgname=asphalt-firmware
 pkgver=r0
 pkgrel=1
-pkgdesc="Firmware and sensor configs for the Lenovo Legion Y700 Gen 2 (TB320FC)"
+pkgdesc="Firmware and sensor configs for the Lenovo Legion Y700 Gen 2 (asphalt)"
 arch=(any)
 url="https://github.com/lenovo-basements/asphalt-firmware"
 license=(LicenseRef-proprietary-redistributable)
@@ -35,7 +35,7 @@ package() {
   cp -r --no-preserve=ownership qcom/sensors/config "$pkgdir/usr/share/qcom/sensors/"
   install -m644 qcom/sensors/sns_reg.conf "$pkgdir/usr/share/qcom/sensors/"
   # The touch driver asks for the generic name when it rebinds.
-  ln -s tb320fc-nt36523n.bin "$fw/novatek/novatek_ts_fw.bin"
+  ln -s asphalt-nt36523n.bin "$fw/novatek/novatek_ts_fw.bin"
   find "$pkgdir" -name '._*' -delete
   find "$fw" -type f -exec chmod 644 {} +
 }

@@ -1,4 +1,4 @@
-# Device support for the Lenovo Legion Y700 Gen 2 (TB320FC): the daemons,
+# Device support for the Lenovo Legion Y700 Gen 2 (asphalt): the daemons,
 # units, udev rules, audio (UCM + WirePlumber), power profiles, haptics and
 # sensor glue from linux-asphalt-build's rootfs/, laid out the Arch way:
 # programs in /usr/bin, units and drop-ins under /usr/lib, so /etc stays
@@ -10,7 +10,7 @@
 pkgname=asphalt-device-support
 pkgver=r0
 pkgrel=1
-pkgdesc="Device support for the Lenovo Legion Y700 Gen 2 (TB320FC)"
+pkgdesc="Device support for the Lenovo Legion Y700 Gen 2 (asphalt)"
 arch=(any)
 url="https://github.com/lenovo-basements/linux-asphalt-build"
 license=(GPL-2.0-or-later)
@@ -23,8 +23,8 @@ depends=(
 )
 optdepends=(
   'feedbackd: keyboard haptics (squeekboard) through the device theme'
-  'gnome-shell: the y700-haptics extension'
-  'chromium: the y700-chromium launcher (V4L2 hardware decode)'
+  'gnome-shell: the asphalt-haptics extension'
+  'chromium: the asphalt-chromium launcher (V4L2 hardware decode)'
   'libcamera: cameras (pkgbuilds/libcamera adds the sensor helpers)'
 )
 backup=(etc/libcamera/ipa/simple/ov13b10.yaml
@@ -45,7 +45,7 @@ package() {
 
   # Programs (regular files only: a stray __pycache__ must not slip in).
   find "$r/usr/local/bin" -maxdepth 1 -type f -exec install -Dm755 -t "$d/usr/bin/" {} +
-  install -Dm644 -t "$d/usr/share/applications/" "$r/usr/share/applications/y700-chromium.desktop"
+  install -Dm644 -t "$d/usr/share/applications/" "$r/usr/share/applications/asphalt-chromium.desktop"
 
   # systemd: units, drop-ins, sleep hooks, logind/sleep/zram config.
   install -Dm644 -t "$d/usr/lib/systemd/system/" "$r"/etc/systemd/system/*.service "$r"/etc/systemd/system/*.socket
@@ -62,16 +62,16 @@ package() {
 # Units the asphalt image enables (systemctl preset <unit>...).
 enable pd-mapper.service
 enable hexagonrpcd-sdsp.service
-enable y700-touch-rightclick.service
-enable y700-lid-daemon.service
-enable y700-power-button.service
-enable y700-resume-guard.service
-enable y700-suspend-sensors.service
-enable y700-bluetooth-setup.service
-enable y700-wifi-mac.service
-enable y700-hapticd.socket
-enable y700-hapticd-fifo.socket
-enable y700-hapticd-control.socket
+enable asphalt-touch-rightclick.service
+enable asphalt-lid-daemon.service
+enable asphalt-power-button.service
+enable asphalt-resume-guard.service
+enable asphalt-suspend-sensors.service
+enable asphalt-bluetooth-setup.service
+enable asphalt-wifi-mac.service
+enable asphalt-hapticd.socket
+enable asphalt-hapticd-fifo.socket
+enable asphalt-hapticd-control.socket
 enable tuned.service
 enable tuned-ppd.service
 PRESET
@@ -83,8 +83,8 @@ PRESET
 
   # Audio: UCM profile, WirePlumber config.
   local ucm="$d/usr/share/alsa/ucm2"
-  install -Dm644 -t "$ucm/Qualcomm/sm8450/Lenovo-TB320FC/" "$r"/usr/share/alsa/ucm2/Qualcomm/sm8450/Lenovo-TB320FC/*.conf
-  install -Dm644 -t "$ucm/conf.d/sm8450/" "$r/usr/share/alsa/ucm2/conf.d/sm8450/Lenovo-TB320FC.conf"
+  install -Dm644 -t "$ucm/Qualcomm/sm8450/Lenovo-Asphalt/" "$r"/usr/share/alsa/ucm2/Qualcomm/sm8450/Lenovo-Asphalt/*.conf
+  install -Dm644 -t "$ucm/conf.d/sm8450/" "$r/usr/share/alsa/ucm2/conf.d/sm8450/Lenovo-Asphalt.conf"
   install -Dm644 -t "$d/usr/share/wireplumber/wireplumber.conf.d/" "$r"/etc/wireplumber/wireplumber.conf.d/*.conf
 
   # Cameras: soft-IPA tuning (libcamera reads /etc/libcamera/ipa first).
@@ -93,13 +93,13 @@ PRESET
   # Power profiles. tuned-ppd only reads /etc/tuned/ppd.conf (owned by
   # tuned-ppd), so the mapping ships here and the .install points it out.
   install -d "$d/usr/lib/tuned/profiles"
-  cp -r --no-preserve=ownership "$r"/etc/tuned/profiles/y700-* "$d/usr/lib/tuned/profiles/"
+  cp -r --no-preserve=ownership "$r"/etc/tuned/profiles/asphalt-* "$d/usr/lib/tuned/profiles/"
   install -Dm644 "$r/etc/tuned/ppd.conf" "$d/usr/share/asphalt/tuned-ppd.conf"
 
   # Haptics: feedbackd device theme (looked up by DT compatible, /usr/share
   # only) and the GNOME extension.
   install -Dm644 -t "$d/usr/share/feedbackd/themes/" "$r"/usr/local/share/feedbackd/themes/*.json
-  local ext=usr/share/gnome-shell/extensions/y700-haptics@lenovo.local
+  local ext=usr/share/gnome-shell/extensions/asphalt-haptics@lenovo.local
   install -Dm644 -t "$d/$ext/" "$r/$ext"/{extension.js,metadata.json}
 
   # /usr/local was the old prefix: point everything at the packaged paths.

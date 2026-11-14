@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package a TB320FC kernel/DTB with the verified SD/USB loader; never flash."""
+"""Package an asphalt kernel/DTB with the verified SD/USB loader; never flash."""
 import argparse
 import hashlib
 import json
@@ -100,6 +100,36 @@ def cpio_entries(data):
     return result
 
 
+def rename_firmware(entries, rules, firmware_dir=None):
+    """Rename lib/firmware paths in a parsed initramfs, by whole-component path
+    prefix (OLD=NEW, relative to lib/firmware). File contents never change: with
+    firmware_dir, each renamed file must equal that tree's file at its new path."""
+    prefix, renamed, report = 'lib/firmware/', {}, []
+    def target(name):
+        if not name.startswith(prefix):
+            return name
+        rel = name[len(prefix):]
+        for old, new in rules:
+            if rel == old or rel.startswith(old + '/'):
+                return prefix + new + rel[len(old):]
+        return name
+    for name, (fields, content) in entries.items():
+        new = target(name)
+        require(new not in renamed, 'Firmware rename collides: ' + new)
+        if new != name:
+            require(new not in entries, 'Firmware rename target already exists: ' + new)
+            if stat.S_ISREG(fields[1]) and firmware_dir is not None:
+                source = firmware_dir / new[len(prefix):]
+                require(source.is_file(), 'Renamed firmware missing from --firmware-dir: ' + str(source))
+                require(source.read_bytes() == content,
+                        'Renamed firmware differs from --firmware-dir: ' + new)
+            report.append({'from': name, 'to': new, 'sha256': sha256(content)}
+                          if stat.S_ISREG(fields[1]) else {'from': name, 'to': new})
+        renamed[new] = (fields, content)
+    require(report or not rules, 'No initramfs entry matched the firmware rename rules')
+    return renamed, report
+
+
 def cpio_entry(name, content, mode, ino):
     encoded = name.encode() + b'\0'
     fields = (ino, mode, 0, 0, 1, 0, len(content), 0, 0, 0, 0, len(encoded), 0)
@@ -195,12 +225,24 @@ class Tree:
         return output, refs
 
 
-def verify_resources(old_blob, new_blob, allow_usb_changes=False, accepted=()):
+def verify_resources(old_blob, new_blob, allow_usb_changes=False, accepted=(), allow_compatible=None):
     old, new = Tree(old_blob), Tree(new_blob)
     require('/__symbols__' in new.nodes, 'Compile DTB with dtc -@ to retain overlay symbols')
+    compatible_change = None
     for key in ('compatible', 'qcom,msm-id', 'qcom,board-id', 'region_country'):
-        require(old.nodes['/'].get(key) == new.nodes['/'].get(key),
-                'Bootloader identity changed: ' + key)
+        if old.nodes['/'].get(key) == new.nodes['/'].get(key):
+            continue
+        # A board rename changes the root compatible on purpose. ABL picks
+        # the DTB by msm-id/board-id, which stay pinned; the new compatible
+        # must be exactly the list the caller expects.
+        if key == 'compatible' and allow_compatible is not None:
+            wanted = ('\0'.join(allow_compatible) + '\0').encode()
+            require(new.nodes['/'].get(key) == wanted,
+                    'Root compatible is not the one passed to --allow-compatible')
+            compatible_change = {'old': old.nodes['/'].get(key).rstrip(b'\0').decode().split('\0'),
+                                 'new': list(allow_compatible)}
+            continue
+        require(False, 'Bootloader identity changed: ' + key)
     for key, value in old.nodes.get('/aliases', {}).items():
         if key.startswith(('mmc', 'usb')):
             require(value == new.nodes.get('/aliases', {}).get(key),
@@ -273,6 +315,7 @@ def verify_resources(old_blob, new_blob, allow_usb_changes=False, accepted=()):
     unreviewed = [d for d in differences if (d['node'], d['property']) not in accepted]
     require(not unreviewed, 'SD/USB/memory resource changes: ' + json.dumps(unreviewed))
     return {'anchors': list(anchors), 'nodes_compared': len(checked),
+            'compatible_change': compatible_change,
             'ancestor_bus_nodes_compared': len(ancestors - checked),
             'phandles_resolved_to_paths': True, 'differences': [],
             'accepted_differences': [d for d in differences
@@ -313,8 +356,9 @@ def package(args):
     config = read_config(args.config)
     required_config = verify_config(config)
     accepted = json.loads(args.accept_differences.read_text()) if args.accept_differences else []
+    allow_compatible = args.allow_compatible.split() if args.allow_compatible else None
     resource_report = verify_resources(before['dtb'], dtb, allow_usb_changes=args.allow_usb_changes,
-                                       accepted=accepted)
+                                       accepted=accepted, allow_compatible=allow_compatible)
     archive = lz4(ramdisk, decompress=True)
     old_entries = cpio_entries(archive)
     require('init' in old_entries, 'Generic initramfs lacks /init')
@@ -335,8 +379,21 @@ def package(args):
     fwname = 'novatek/novatek_ts_fw.bin'
     embedded = fwname in config.get('CONFIG_EXTRA_FIRMWARE', '').strip('"').split()
     firmware_report = {'embedded_by_config': embedded, 'added_to_initramfs': False}
+    rename_report = None
+    if args.rename_firmware:
+        rules = []
+        for rule in args.rename_firmware:
+            old, sep, new = rule.partition('=')
+            require(sep and old and new and not old.startswith('/') and not new.startswith('/'),
+                    'Expected --rename-firmware OLD=NEW (paths relative to lib/firmware)')
+            rules.append((old.rstrip('/'), new.rstrip('/')))
+        require(not args.touch_firmware, '--rename-firmware and --touch-firmware are exclusive')
+        old_entries, renamed = rename_firmware(old_entries, rules, args.firmware_dir)
+        rename_report = {'rules': [f'{o}={n}' for o, n in rules],
+                         'verified_against': str(args.firmware_dir.resolve()) if args.firmware_dir else None,
+                         'contents_changed': 0, 'entries': renamed}
     new_ramdisk = ramdisk
-    if args.init_script:
+    if args.init_script or args.rename_firmware:
         archive = b''
         for name, (fields, content) in old_entries.items():
             archive += cpio_entry(name, content, fields[1], fields[0])
@@ -361,7 +418,7 @@ def package(args):
         new_ramdisk = lz4(archive)
         require(lz4(new_ramdisk, decompress=True) == archive, 'LZ4 round-trip failed')
         firmware_report.update(added_to_initramfs=True, sha256=sha256(firmware))
-    elif config.get('CONFIG_TOUCHSCREEN_NOVATEK_NT36523N') == 'y':
+    if not args.touch_firmware and config.get('CONFIG_TOUCHSCREEN_NOVATEK_NT36523N') == 'y':
         require(embedded or 'lib/firmware/' + fwname in old_entries,
                 'Built-in touch needs embedded firmware or --touch-firmware')
     boot_header = bytearray(boot[:4096])
@@ -424,6 +481,7 @@ def package(args):
                                      for name in ('ramdisk', 'table', 'bootconfig')},
         'installed_dtbo_retained_sha256': baseline_checksums[dtbo_name],
         'touch_firmware': firmware_report,
+        'firmware_renames': rename_report,
         'resource_validation': resource_report, 'builtin_loader_dependencies': required_config,
         'validation': 'Image/DTB substitution and loader/resource checks passed; hardware untested',
         'module_policy': 'Install modules from this build into the SD root; do not use old helpers',
@@ -432,7 +490,7 @@ def package(args):
     # No output is created until all byte preservation and compatibility checks pass.
     out.mkdir(parents=True)
     for name, data in (('boot.img', new_boot), ('vendor_boot.img', new_vendor),
-                       ('Image', image), ('sm8475-lenovo-tb320fc.dtb', dtb),
+                       ('Image', image), ('sm8475-lenovo-asphalt-row.dtb', dtb),
                        ('initramfs.cpio.lz4', new_ramdisk), ('init', init)):
         (out / name).write_bytes(data)
     shutil.copy2(args.config, out / 'kernel.config')
@@ -476,9 +534,18 @@ def main():
                         help='Append diagnostic arguments to the existing Android boot command line')
     parser.add_argument('--output', type=Path, required=True, help='New directory; existing outputs are refused')
     parser.add_argument('--partition-size', type=int, default=100663296,
-                        help='TB320FC boot/vendor_boot capacity in bytes (default: 96 MiB)')
+                        help='asphalt boot/vendor_boot capacity in bytes (default: 96 MiB)')
     parser.add_argument('--allow-usb-changes', action='store_true',
                         help='Allow intentional USB controller and mux changes in DTB')
+    parser.add_argument('--rename-firmware', metavar='OLD=NEW', action='append',
+                        help='Rename firmware in the generic initramfs by path prefix relative to '
+                             'lib/firmware (repeatable); contents stay byte-identical')
+    parser.add_argument('--firmware-dir', type=Path,
+                        help='With --rename-firmware: firmware tree every renamed file must match')
+    parser.add_argument('--allow-compatible', metavar='LIST',
+                        help='Allow the root compatible to differ from the baseline, but only '
+                             'as exactly this space-separated list (a board rename); msm-id, '
+                             'board-id and region_country stay pinned')
     args = parser.parse_args()
     try:
         package(args)

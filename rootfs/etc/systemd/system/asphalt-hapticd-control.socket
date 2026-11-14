@@ -1,0 +1,14 @@
+[Unit]
+Description=Y700 haptics broker: control socket (asphalt-hapticctl)
+
+[Socket]
+ListenStream=/run/asphalt-hapticd/control
+DirectoryMode=0755
+SocketUser=root
+SocketGroup=input
+SocketMode=0660
+FileDescriptorName=control
+Service=asphalt-hapticd.service
+
+[Install]
+WantedBy=sockets.target

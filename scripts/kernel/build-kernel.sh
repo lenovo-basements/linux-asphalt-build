@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the TB320FC (Lenovo Legion Y700 Gen 2, "asphalt") kernel and package
+# Build the asphalt (Lenovo Legion Y700 Gen 2) kernel and package
 #
 #   scripts/kernel/build-kernel.sh --src ~/linux --baseline ~/asphalt-baseline \
 #       --out /tmp/asphalt-build --artifacts ./out [--localversion -asphalt] \
@@ -12,7 +12,20 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="" OUT="" ART="" BASELINE="" LOCALVERSION="" JOBS=""
 FRAGMENTS=()
-DTB_NAME=sm8475-lenovo-tb320fc
+DTB_NAME=sm8475-lenovo-asphalt-row
+# The packaging baseline predates the tb320fc -> asphalt rename, so the root
+# compatible differs from it on purpose. package-boot.py accepts exactly this
+# list (msm-id/board-id/region_country stay pinned); --allow-compatible overrides.
+ALLOW_COMPATIBLE="lenovo,asphalt-row lenovo,asphalt qcom,sm8475 qcom,sm8450 qcom,cape-mtp qcom,cape qcom,mtp"
+# The baseline ramdisk's firmware still has the old names, and the DSPs, GPU
+# zap and audio topology load from it before the root is mounted. Renamed in
+# the ramdisk, contents checked against the asphalt-firmware tree.
+FIRMWARE_RENAMES=(
+    qcom/lenovo/tb320fc=qcom/lenovo/asphalt
+    qcom/sm8450/Lenovo-TB320FC-tplg.bin=qcom/sm8450/Lenovo-Asphalt-tplg.bin
+    qcom/sm8475/Lenovo-TB320FC-tplg.bin=qcom/sm8475/Lenovo-Asphalt-tplg.bin
+)
+FIRMWARE_DIR="$HERE/../../../asphalt-firmware"
 
 usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [[ $# -gt 0 ]]; do
@@ -23,6 +36,8 @@ while [[ $# -gt 0 ]]; do
         --baseline) BASELINE="$2"; shift 2 ;;
         --localversion) LOCALVERSION="$2"; shift 2 ;;
         --fragment) FRAGMENTS+=("$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"); shift 2 ;;
+        --allow-compatible) ALLOW_COMPATIBLE="$2"; shift 2 ;;
+        --firmware-dir) FIRMWARE_DIR="$2"; shift 2 ;;
         -j|--jobs) JOBS="$2"; shift 2 ;;
         -h|--help) usage 0 ;;
         *) echo "unknown option: $1" >&2; usage 1 ;;
@@ -114,5 +129,8 @@ echo "BUILD-OK $(cat "$ART/kernel.release")"
 rm -rf "$ART/flash"
 python3 "$HERE/package-boot.py" --baseline "$BASELINE" --image "$ART/Image" \
     --dtb "$ART/$DTB_NAME-abl.dtb" --config "$ART/kernel.config" \
-    --kernel-release "$ART/kernel.release" --output "$ART/flash" > "$ART/package.log"
+    --kernel-release "$ART/kernel.release" --output "$ART/flash" \
+    --allow-compatible "$ALLOW_COMPATIBLE" \
+    $(printf -- '--rename-firmware %s ' "${FIRMWARE_RENAMES[@]}") \
+    --firmware-dir "$FIRMWARE_DIR" > "$ART/package.log"
 echo "PACKAGE-OK $ART/flash"

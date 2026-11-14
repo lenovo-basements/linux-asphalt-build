@@ -1,4 +1,4 @@
-# Kernel for the Lenovo Legion Y700 Gen 2 (TB320FC), packaged from a finished
+# Kernel for the Lenovo Legion Y700 Gen 2 (asphalt), packaged from a finished
 # scripts/kernel/build-kernel.sh + package-boot.py output directory (kernels
 # are built on the Mac with clang/LLVM=1). Nothing here flashes anything:
 #
@@ -10,10 +10,10 @@
 pkgname=linux-asphalt
 _build="${ASPHALT_KERNEL_BUILD:?set ASPHALT_KERNEL_BUILD to a build-kernel.sh output dir}"
 _release="$(<"$_build/kernel.release")"
-# 7.4.0-rc2-y700-pen-20261114+ -> 7.4.0.rc2.y700.pen.20261114
+# 7.4.0-rc2-asphalt-pen-20261114+ -> 7.4.0.rc2.asphalt.pen.20261114
 pkgver="$(sed 's/+$//; s/-/./g' <<<"$_release")"
 pkgrel=1
-pkgdesc="Linux kernel and modules for the Lenovo Legion Y700 Gen 2 (TB320FC)"
+pkgdesc="Linux kernel and modules for the Lenovo Legion Y700 Gen 2 (asphalt)"
 arch=(aarch64)
 url="https://github.com/lenovo-basements/lenovo-sm8475-mainline"
 license=(GPL-2.0-only)
@@ -33,8 +33,8 @@ package() {
 
   install -Dm644 "$_build/Image" "$mod/Image"
   install -Dm644 "$_build/kernel.config" "$mod/config"
-  install -Dm644 "$_build/sm8475-lenovo-tb320fc.dtb" "$mod/dtbs/qcom/sm8475-lenovo-tb320fc.dtb"
-  install -Dm644 "$_build/sm8475-lenovo-tb320fc-abl.dtb" "$mod/dtbs/qcom/sm8475-lenovo-tb320fc-abl.dtb"
+  install -Dm644 "$_build/sm8475-lenovo-asphalt-row.dtb" "$mod/dtbs/qcom/sm8475-lenovo-asphalt-row.dtb"
+  install -Dm644 "$_build/sm8475-lenovo-asphalt-row-abl.dtb" "$mod/dtbs/qcom/sm8475-lenovo-asphalt-row-abl.dtb"
   if [[ -d "$_build/flash" ]]; then
     install -d "$mod/asphalt-boot"
     install -m644 "$_build"/flash/{boot.img,vendor_boot.img,manifest.json,SHA256SUMS} "$mod/asphalt-boot/"

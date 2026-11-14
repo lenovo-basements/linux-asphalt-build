@@ -43,8 +43,9 @@ fi
 id "$BUILD_USER" >/dev/null 2>&1 || useradd -r -m -d "/var/lib/$BUILD_USER" "$BUILD_USER"
 echo "$BUILD_USER ALL=(root) NOPASSWD: /usr/bin/pacman" > /etc/sudoers.d/90-asphalt-build
 chmod 440 /etc/sudoers.d/90-asphalt-build
-# The checkouts are usually owned by someone else (or a host mount).
-sudo -u "$BUILD_USER" git config --global --replace-all safe.directory '*'
+# The checkouts are usually owned by someone else (or a host mount). Passed as
+# command-line config (GIT_CONFIG_*), which git honours whatever $HOME is.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
 pacman -S --needed --noconfirm base-devel git >/dev/null
 
 in_list() { local x="$1"; shift; for y; do [[ $x == "$y" ]] && return 0; done; return 1; }
@@ -61,10 +62,16 @@ for pkg in "${ORDER[@]}"; do
     flags=(--syncdeps --noconfirm --clean --cleanbuild --force)
     in_list "$pkg" "${NODEPS[@]}" && flags+=(--nodeps)
     (cd "$WORK/$pkg" && sudo -u "$BUILD_USER" \
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
         ASPHALT_BUILD_DIR="$REPO_DIR" ASPHALT_FIRMWARE_DIR="$FIRMWARE_DIR" \
         ASPHALT_PEN_DIR="$PEN_DIR" ASPHALT_KERNEL_BUILD="$KERNEL_BUILD" \
         PKGDEST="$WORK/$pkg" makepkg "${flags[@]}")
     built=("$WORK/$pkg"/*.pkg.tar.*)
+    for f in "${built[@]}"; do
+        case "$(basename "$f")" in
+            *-r.g-*|*-r-*) echo "$f: empty version (pkgver() failed, see above)" >&2; exit 1 ;;
+        esac
+    done
     in_list "$pkg" "${INSTALL_AFTER[@]}" && pacman -U --noconfirm "${built[@]}"
     # Drop older builds of the same packages, keep the new ones.
     for f in "${built[@]}"; do

@@ -2,7 +2,7 @@ _units() { sed -n 's/^enable //p' /usr/lib/systemd/system-preset/80-asphalt.pres
 
 post_install() {
   if ! cmp -s /usr/share/asphalt/tuned-ppd.conf /etc/tuned/ppd.conf 2>/dev/null; then
-    echo ":: For the y700 power profiles, use the asphalt tuned-ppd mapping:"
+    echo ":: For the asphalt power profiles, use the asphalt tuned-ppd mapping:"
     echo "   cp /usr/share/asphalt/tuned-ppd.conf /etc/tuned/ppd.conf"
   fi
   echo ":: Enable the device services with:"

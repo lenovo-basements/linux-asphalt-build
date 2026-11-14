@@ -1,0 +1,30 @@
+#!/bin/bash
+# Give the Wi-Fi interface this tablet's factory MAC (written to /run, so nothing
+# device-specific is stored in the rootfs image). Runs before NetworkManager.
+# The WCN6855 has no MAC of its own (its permanent address is all zeros), and
+# the interface name isn't stable (wlan0 or a predictable wlp1s0), so it is
+# found, and matched in NetworkManager, by driver.
+set -euo pipefail
+DRIVER=ath11k_pci
+mac="$(/usr/local/bin/asphalt-device-mac wifi)"
+
+# The interface itself, if the driver has created it already (it is still down
+# before NetworkManager starts).
+for dev in /sys/class/net/*; do
+    [[ -d $dev/wireless && "$(basename "$(readlink -f "$dev/device/driver")")" == "$DRIVER" ]] || continue
+    ip link set dev "${dev##*/}" address "$mac" || echo "could not set ${dev##*/} address" >&2
+done
+
+# NetworkManager: cloned-mac-address is a connection default, the scan
+# setting a device one; each is ignored in the other kind of section.
+install -d -m 755 /run/NetworkManager/conf.d
+cat > /run/NetworkManager/conf.d/10-asphalt-mac.conf <<CONF
+[device-asphalt-mac]
+match-device=driver:${DRIVER}
+wifi.scan-rand-mac-address=no
+
+[connection-asphalt-mac]
+match-device=driver:${DRIVER}
+wifi.cloned-mac-address=${mac}
+CONF
+echo "Wi-Fi MAC (${DRIVER}): ${mac}"

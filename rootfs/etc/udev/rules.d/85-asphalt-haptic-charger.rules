@@ -1,0 +1,2 @@
+# plays only on a real transition.
+SUBSYSTEM=="power_supply", KERNEL=="qcom-battmgr-usb", ACTION=="change", RUN+="/usr/local/bin/asphalt-haptic-event charger"

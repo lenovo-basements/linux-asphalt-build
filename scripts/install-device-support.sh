@@ -16,7 +16,7 @@ Options:
   --vendor-haptics <dir>
                        Optional: install Lenovo's full RTP haptic library
                        (*_RTP.bin from the device's vendor firmware) for
-                       y700-hapticd; without it only the core effects exist
+                       asphalt-hapticd; without it only the core effects exist
   -h, --help           Show this help message
 EOF
     exit 0
@@ -58,7 +58,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ -z "$TARGET_ROOT" || "$TARGET_ROOT" == 
     exit 1
 fi
 
-echo "=== Installing Legion Y700 (TB320FC) Device Support ==="
+echo "=== Installing Legion Y700 Gen 2 (asphalt) Device Support ==="
 echo "Target root: ${TARGET_ROOT:-/}"
 
 # Stock firmware, vendor configs and tools: sibling asphalt-firmware repo.
@@ -71,7 +71,7 @@ mkdir -p "${TARGET_ROOT}/usr/local/bin"
 find "${REPO_DIR}/rootfs/usr/local/bin" -maxdepth 1 -type f \
     -exec install -m 755 -t "${TARGET_ROOT}/usr/local/bin/" {} +
 mkdir -p "${TARGET_ROOT}/usr/share/applications"
-install -m 644 "${REPO_DIR}/rootfs/usr/share/applications/y700-chromium.desktop" "${TARGET_ROOT}/usr/share/applications/"
+install -m 644 "${REPO_DIR}/rootfs/usr/share/applications/asphalt-chromium.desktop" "${TARGET_ROOT}/usr/share/applications/"
 # Stock vendor sensor configs and the sensh tool live in the sibling
 # asphalt-firmware repo, next to the stock firmware.
 mkdir -p "${TARGET_ROOT}/usr/share/qcom/sensors"
@@ -83,20 +83,20 @@ else
     echo "Note: ${FIRMWARE_DIR}/tools/sensh not found; the lid sensor needs sensh." >&2
 fi
 mkdir -p "${TARGET_ROOT}/usr/lib/sysusers.d"
-install -m 644 "${REPO_DIR}/rootfs/usr/lib/sysusers.d/y700-fastrpc.conf" "${TARGET_ROOT}/usr/lib/sysusers.d/"
+install -m 644 "${REPO_DIR}/rootfs/usr/lib/sysusers.d/asphalt-fastrpc.conf" "${TARGET_ROOT}/usr/lib/sysusers.d/"
 if command -v systemd-sysusers >/dev/null 2>&1; then
-    systemd-sysusers --root="${TARGET_ROOT:-/}" /usr/lib/sysusers.d/y700-fastrpc.conf
+    systemd-sysusers --root="${TARGET_ROOT:-/}" /usr/lib/sysusers.d/asphalt-fastrpc.conf
 fi
 
 # GNOME charging uses an authenticated helper, never world-writable sysfs.
 mkdir -p "${TARGET_ROOT}/usr/share/polkit-1/actions"
-install -m 644 "${REPO_DIR}/rootfs/usr/share/polkit-1/actions/local.lenovo.y700.charge.policy" \
+install -m 644 "${REPO_DIR}/rootfs/usr/share/polkit-1/actions/local.lenovo.asphalt.charge.policy" \
     "${TARGET_ROOT}/usr/share/polkit-1/actions/"
 mkdir -p "${TARGET_ROOT}/etc/polkit-1/rules.d"
-install -m 644 "${REPO_DIR}/rootfs/etc/polkit-1/rules.d/49-y700-charge.rules" \
-    "${REPO_DIR}/rootfs/etc/polkit-1/rules.d/49-y700-microsd.rules" \
+install -m 644 "${REPO_DIR}/rootfs/etc/polkit-1/rules.d/49-asphalt-charge.rules" \
+    "${REPO_DIR}/rootfs/etc/polkit-1/rules.d/49-asphalt-microsd.rules" \
     "${TARGET_ROOT}/etc/polkit-1/rules.d/"
-EXTENSION_DIR="usr/share/gnome-shell/extensions/y700-haptics@lenovo.local"
+EXTENSION_DIR="usr/share/gnome-shell/extensions/asphalt-haptics@lenovo.local"
 mkdir -p "${TARGET_ROOT}/${EXTENSION_DIR}"
 install -m 644 "${REPO_DIR}/rootfs/${EXTENSION_DIR}/extension.js" \
     "${REPO_DIR}/rootfs/${EXTENSION_DIR}/metadata.json" "${TARGET_ROOT}/${EXTENSION_DIR}/"
@@ -146,14 +146,14 @@ fi
 # 5. Install ALSA UCM2 audio profiles and WirePlumber configuration
 echo "[5/5] Installing ALSA UCM2 and WirePlumber audio configs..."
 UCM_BASE="${TARGET_ROOT}/usr/share/alsa/ucm2"
-mkdir -p "${UCM_BASE}/Qualcomm/sm8450/Lenovo-TB320FC"
+mkdir -p "${UCM_BASE}/Qualcomm/sm8450/Lenovo-Asphalt"
 mkdir -p "${UCM_BASE}/conf.d/sm8450"
 
-install -m 644 "${REPO_DIR}/rootfs/usr/share/alsa/ucm2/Qualcomm/sm8450/Lenovo-TB320FC/Lenovo-TB320FC.conf" \
-               "${UCM_BASE}/Qualcomm/sm8450/Lenovo-TB320FC/"
-install -m 644 "${REPO_DIR}/rootfs/usr/share/alsa/ucm2/Qualcomm/sm8450/Lenovo-TB320FC/HiFi.conf" \
-               "${UCM_BASE}/Qualcomm/sm8450/Lenovo-TB320FC/"
-install -m 644 "${REPO_DIR}/rootfs/usr/share/alsa/ucm2/conf.d/sm8450/Lenovo-TB320FC.conf" \
+install -m 644 "${REPO_DIR}/rootfs/usr/share/alsa/ucm2/Qualcomm/sm8450/Lenovo-Asphalt/Lenovo-Asphalt.conf" \
+               "${UCM_BASE}/Qualcomm/sm8450/Lenovo-Asphalt/"
+install -m 644 "${REPO_DIR}/rootfs/usr/share/alsa/ucm2/Qualcomm/sm8450/Lenovo-Asphalt/HiFi.conf" \
+               "${UCM_BASE}/Qualcomm/sm8450/Lenovo-Asphalt/"
+install -m 644 "${REPO_DIR}/rootfs/usr/share/alsa/ucm2/conf.d/sm8450/Lenovo-Asphalt.conf" \
                "${UCM_BASE}/conf.d/sm8450/"
 
 if [[ -d "${REPO_DIR}/rootfs/etc/wireplumber" ]]; then
@@ -177,7 +177,7 @@ install -m 644 "${FIRMWARE_DIR}/qcom/vpu/vpu20_p4_gen2_v2_4.mbn" \
 
 # Power profiles (tuned-ppd keeps GNOME's power-mode menu working) and zram swap.
 mkdir -p "${TARGET_ROOT}/etc/tuned/profiles"
-cp -a "${REPO_DIR}/rootfs/etc/tuned/profiles/"y700-* "${TARGET_ROOT}/etc/tuned/profiles/"
+cp -a "${REPO_DIR}/rootfs/etc/tuned/profiles/"asphalt-* "${TARGET_ROOT}/etc/tuned/profiles/"
 install -m 644 "${REPO_DIR}/rootfs/etc/tuned/ppd.conf" "${TARGET_ROOT}/etc/tuned/ppd.conf"
 install -m 644 "${REPO_DIR}/rootfs/etc/systemd/zram-generator.conf" "${TARGET_ROOT}/etc/systemd/zram-generator.conf"
 mkdir -p "${TARGET_ROOT}/etc/sysctl.d"
@@ -205,36 +205,36 @@ if [[ "$ENABLE_SERVICES" -eq 1 ]]; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable pd-mapper.service 2>/dev/null || true
         systemctl enable hexagonrpcd-sdsp.service 2>/dev/null || true
-        systemctl enable y700-touch-rightclick.service 2>/dev/null || true
-        systemctl enable y700-lid-daemon.service 2>/dev/null || true
-        systemctl enable y700-power-button.service 2>/dev/null || true
-        systemctl enable y700-resume-guard.service
-        systemctl enable y700-suspend-sensors.service
-        systemctl enable y700-bluetooth-setup.service 2>/dev/null || true
-        systemctl enable y700-wifi-mac.service 2>/dev/null || true
-        systemctl disable y700-haptic-rtp.socket 2>/dev/null || true  # replaced by y700-hapticd
-        systemctl enable y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket 2>/dev/null || true
+        systemctl enable asphalt-touch-rightclick.service 2>/dev/null || true
+        systemctl enable asphalt-lid-daemon.service 2>/dev/null || true
+        systemctl enable asphalt-power-button.service 2>/dev/null || true
+        systemctl enable asphalt-resume-guard.service
+        systemctl enable asphalt-suspend-sensors.service
+        systemctl enable asphalt-bluetooth-setup.service 2>/dev/null || true
+        systemctl enable asphalt-wifi-mac.service 2>/dev/null || true
+        systemctl disable asphalt-haptic-rtp.socket 2>/dev/null || true  # replaced by asphalt-hapticd
+        systemctl enable asphalt-hapticd.socket asphalt-hapticd-fifo.socket asphalt-hapticd-control.socket 2>/dev/null || true
         systemctl enable tuned.service tuned-ppd.service 2>/dev/null || true
-        systemctl try-restart y700-hapticd.service 2>/dev/null || true  # rescan effects
+        systemctl try-restart asphalt-hapticd.service 2>/dev/null || true  # rescan effects
         udevadm control --reload 2>/dev/null || true
         udevadm trigger 2>/dev/null || true
     else
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants"
         ln -sf ../pd-mapper.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/pd-mapper.service"
         ln -sf ../hexagonrpcd-sdsp.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/hexagonrpcd-sdsp.service"
-        ln -sf ../y700-touch-rightclick.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/y700-touch-rightclick.service"
-        ln -sf ../y700-lid-daemon.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/y700-lid-daemon.service"
-        ln -sf ../y700-power-button.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/y700-power-button.service"
+        ln -sf ../asphalt-touch-rightclick.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/asphalt-touch-rightclick.service"
+        ln -sf ../asphalt-lid-daemon.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/asphalt-lid-daemon.service"
+        ln -sf ../asphalt-power-button.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/asphalt-power-button.service"
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/sleep.target.wants"
-        ln -sf ../y700-resume-guard.service "${TARGET_ROOT}/etc/systemd/system/sleep.target.wants/y700-resume-guard.service"
+        ln -sf ../asphalt-resume-guard.service "${TARGET_ROOT}/etc/systemd/system/sleep.target.wants/asphalt-resume-guard.service"
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/sleep.target.requires"
-        ln -sf ../y700-suspend-sensors.service "${TARGET_ROOT}/etc/systemd/system/sleep.target.requires/y700-suspend-sensors.service"
-        ln -sf ../y700-bluetooth-setup.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/y700-bluetooth-setup.service"
+        ln -sf ../asphalt-suspend-sensors.service "${TARGET_ROOT}/etc/systemd/system/sleep.target.requires/asphalt-suspend-sensors.service"
+        ln -sf ../asphalt-bluetooth-setup.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/asphalt-bluetooth-setup.service"
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/NetworkManager.service.wants"
-        ln -sf ../y700-wifi-mac.service "${TARGET_ROOT}/etc/systemd/system/NetworkManager.service.wants/y700-wifi-mac.service"
+        ln -sf ../asphalt-wifi-mac.service "${TARGET_ROOT}/etc/systemd/system/NetworkManager.service.wants/asphalt-wifi-mac.service"
         mkdir -p "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants"
-        rm -f "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants/y700-haptic-rtp.socket"
-        for unit in y700-hapticd.socket y700-hapticd-fifo.socket y700-hapticd-control.socket; do
+        rm -f "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants/asphalt-haptic-rtp.socket"
+        for unit in asphalt-hapticd.socket asphalt-hapticd-fifo.socket asphalt-hapticd-control.socket; do
             ln -sf "../${unit}" "${TARGET_ROOT}/etc/systemd/system/sockets.target.wants/${unit}"
         done
         ln -sf /usr/lib/systemd/system/tuned.service "${TARGET_ROOT}/etc/systemd/system/multi-user.target.wants/tuned.service"

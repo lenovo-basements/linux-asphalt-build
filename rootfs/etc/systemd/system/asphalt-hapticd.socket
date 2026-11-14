@@ -1,0 +1,13 @@
+[Unit]
+Description=Y700 haptics broker: request datagrams (legacy asphalt-haptic-rtp path)
+
+[Socket]
+ListenDatagram=/run/asphalt-haptic-rtp.sock
+SocketUser=root
+SocketGroup=input
+SocketMode=0660
+FileDescriptorName=dgram
+Service=asphalt-hapticd.service
+
+[Install]
+WantedBy=sockets.target
