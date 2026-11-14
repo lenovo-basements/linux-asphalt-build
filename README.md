@@ -8,6 +8,8 @@
 Scripts and device support for running **Arch Linux ARM** on the
 **Lenovo Legion Y700 (2023)** — model `TB320FC`, codename `asphalt`.
 
+Note: this project will spilt into gentoo linux (replace arch linux arm) and nixos very soon
+
 ## Disclaimer
 - This project is based on [torvalds/linux](https://github.com/torvalds/linux). Stability is questionable and depends on how heavy the merge commit is.
 - I take **zero** responsibility if something goes wrong, or if you get fired because Slack video calls break, or Microsoft Teams stops working after a kernel update. If you point at me for that, I’ll laugh at you.
