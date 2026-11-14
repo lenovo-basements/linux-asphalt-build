@@ -5,7 +5,7 @@ y700-hapticd: the one owner of the two AW86927 haptic motors.
 
 Every client asks for a named effect; the daemon decides what actually plays.
 
-  effects   SRAM pulse patterns (tick, tap, toggle, heavy, gesture, swipe-left,
+  effects   SRAM pulse patterns (tick, soft, tap, toggle, heavy, gesture, swipe-left,
             swipe-right, error) and Lenovo's RTP waveforms (notify, charge-on,
             charge-off, lock, unlock, login). Request: "name [percent] [motor]",
             motor = top | bottom | both; "charger" (udev) becomes charge-on/off.
@@ -41,6 +41,7 @@ STATE_DIR = os.environ.get("STATE_DIRECTORY", "/var/lib/y700-hapticd")
 RUN_DIR = os.environ.get("RUNTIME_DIRECTORY", "/run/y700-hapticd")
 CHARGER = "/sys/class/power_supply/qcom-battmgr-usb/online"
 BACKLIGHT = "/sys/class/backlight/ktz8866-backlight/bl_power"
+BATTERY = "/sys/class/power_supply/qcom-battmgr-bat"
 
 
 # "top" (a8c000.i2c) and "bottom" (a98000.i2c) are the motor ends in portrait.
@@ -63,6 +64,7 @@ PULSE_MS = 30
 # Each step: (delay after the previous step in ms, gain 0-255, motors).
 PATTERNS = {
     "tick": ((0, 120, BOTH),),
+    "soft": ((0, 75, BOTH),),          # lighter than tick: backspace/delete
     "tap": ((0, 200, BOTH),),
     "toggle": ((0, 200, BOTH), (70, 200, BOTH)),
     "heavy": ((0, 255, BOTH), (30, 255, BOTH)),
@@ -71,7 +73,41 @@ PATTERNS = {
     "swipe-left": ((0, 200, ("right",)), (90, 200, ("left",))),
     "swipe-right": ((0, 200, ("left",)), (90, 200, ("right",))),
     "error": ((0, 230, BOTH), (80, 230, BOTH), (80, 230, BOTH)),
+    # Screen-relative ("above"/"below"/"left"/"right" follow the rotation):
+    # volume up taps the motor nearest the top of the screen, down the bottom.
+    "volume-up": ((0, 150, ("above",)),),
+    "volume-down": ((0, 150, ("below",)),),
+    # Physical sweep along the tablet when the screen turns.
+    "rotate-cw": ((0, 170, ("top",)), (80, 170, ("bottom",))),
+    "rotate-ccw": ((0, 170, ("bottom",)), (80, 170, ("top",))),
+    # Steps may carry a 4th value: pulse length in ms (default PULSE_MS).
+    "low-battery": ((0, 255, BOTH, 70), (160, 255, BOTH, 70)),
 }
+SCREEN_SIDES = ("left", "right", "above", "below")
+
+# Features name vendor effects; without the vendor library they fall back to
+# core feedback instead of going silent.
+FALLBACKS = {"drip": "notify", "dudu": "notify", "ring": "notify",
+             "success": "notify", "heartbeat": "toggle", "bottle": "tick",
+             "lullaby": "login"}
+
+MORSE = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", (
+    ".-", "-...", "-.-.", "-..", ".", "..-.", "--.", "....", "..", ".---", "-.-", ".-..", "--",
+    "-.", "---", ".--.", "--.-", ".-.", "...", "-", "..-", "...-", ".--", "-..-", "-.--", "--..",
+    "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..", "----.")))
+MORSE_UNIT = 90      # ms; a dot is a short pulse, a dash a long one
+
+
+def morse_pattern(text):
+    """Pattern for up to 3 letters/digits; gaps follow the 1/3-unit rule."""
+    steps, delay = [], 0
+    for i, ch in enumerate(text):
+        for symbol in MORSE[ch]:
+            length = 40 if symbol == "." else 140
+            steps.append((delay, 200, BOTH, length))
+            delay = length + MORSE_UNIT
+        delay += 2 * MORSE_UNIT       # letter gap = 3 units in total
+    return tuple(steps)
 
 # --- RTP waveforms ------------------------------------------------------------
 # Semantic events -> (vendor file, seconds to keep or None, peak to scale to or None).
@@ -96,6 +132,14 @@ LONG_MAX = 30        # cap for long effects; `y700-hapticctl stop` ends them ear
 CHUNK = 256
 LEAD = 1024          # the RTP FIFO is ~2 KB of SRAM; stay well under it
 STALL = 0.2          # CLOCK_BOOTTIME jump: the chip lost the stream (suspend)
+# The chips' real RTP consumption rate: nominally RATE, measured ~24140 Hz on
+# both TB320FC motors (+0.6 %). Pacing at RATE drains the FIFO in 5-10 s and
+# the chip drops to standby mid-effect. A stream that finds its chip stopped
+# early learns a faster rate (persisted); slightly overfeeding only overflows.
+CHIP_RATE_DEFAULT = 24140
+CHIP_RATE = {}
+CHIP_CHECK = 0.1     # s between chip state checks while streaming
+chip_rate_learned = threading.Event()
 # Vendor files are padded with silence (158_Di: 1.96 s file, 0.12 s of drive).
 # Trimming matters: the motors are busy for the whole stream.
 TRIM_THRESHOLD = 0.08            # of the effect's peak
@@ -103,7 +147,7 @@ TRIM_TAIL = int(0.04 * RATE)
 
 TOUCH, STRONG, SYSTEM = 0, 1, 2
 PRIORITY = {name: TOUCH for name in PATTERNS}
-PRIORITY.update(heavy=STRONG, error=STRONG)
+PRIORITY.update(heavy=STRONG, error=STRONG, morse=STRONG, **{"low-battery": SYSTEM})
 TOUCH_GAP = 0.06     # seconds between touch effects
 WATCHERS_MAX = 8
 REG_CACHE_S = 2.0    # trust cached motor attributes this long
@@ -118,22 +162,33 @@ def rtp_stream(device, data, level, cancel, clock=lambda: time.clock_gettime(tim
     put(device, "activate", 0)
     put(device, "level", level)
     put(device, "rtp_mode", 1)
+    rate = CHIP_RATE.get(device, CHIP_RATE_DEFAULT)
     try:
         fd = os.open(f"{device}/rtp", os.O_WRONLY)
         try:
-            start = clock()
-            sent = 0
+            start = checked = clock()
+            sent = resumed = 0
             while sent < len(data) and not cancel.is_set():
-                played = (clock() - start) * RATE
-                if played - sent > STALL * RATE:
+                now = clock()
+                played = (now - start) * rate
+                if played - (sent - resumed) > STALL * rate:
                     return
-                if sent - played > LEAD:
+                if now - checked > CHIP_CHECK:
+                    checked = now
+                    if read(f"{device}/activate") == "0":    # FIFO ran dry: too slow
+                        if now - start > 1.0 and (sent - resumed) / (now - start) > rate:
+                            rate = CHIP_RATE[device] = (sent - resumed) / (now - start) * 1.001
+                            chip_rate_learned.set()
+                        put(device, "rtp_mode", 1)
+                        start, resumed = clock(), sent
+                        continue
+                if (sent - resumed) - played > LEAD:
                     # wait on the cancel event, so a preempting effect starts at once
-                    cancel.wait(max(0.002, (sent - played - LEAD) / RATE))
+                    cancel.wait(max(0.002, ((sent - resumed) - played - LEAD) / rate))
                     continue
                 sent += os.pwrite(fd, data[sent:sent + CHUNK], 0)
             # let the FIFO drain before leaving RTP mode (not when cancelled)
-            cancel.wait(max(0.0, sent / RATE - (clock() - start)) + 0.02)
+            cancel.wait(max(0.0, (sent - resumed) / rate - (clock() - start)) + 0.02)
         finally:
             os.close(fd)
     finally:
@@ -307,11 +362,13 @@ class ScreenSides:
     def __call__(self):
         transform = self.transform()
         if transform == 1:
-            return {"left": ("bottom",), "right": ("top",)}
+            return {"left": ("bottom",), "right": ("top",), "above": BOTH, "below": BOTH}
         if transform == 3:
-            return {"left": ("top",), "right": ("bottom",)}
-        # upright or upside-down portrait: both motors are level with a horizontal swipe
-        return {"left": BOTH, "right": BOTH}
+            return {"left": ("top",), "right": ("bottom",), "above": BOTH, "below": BOTH}
+        # portrait: both motors are level with a horizontal swipe; one end is up
+        if transform == 2:
+            return {"left": BOTH, "right": BOTH, "above": ("bottom",), "below": ("top",)}
+        return {"left": BOTH, "right": BOTH, "above": ("top",), "below": ("bottom",)}
 
 
 class Daemon:
@@ -326,6 +383,8 @@ class Daemon:
         self.sides = ScreenSides()
         self.watchers = []
         self.catalog = Catalog()
+        self.battery_last = None
+        self.after(5000, self.battery_tick)
         self.rtp_cancel = threading.Event()
         self.rtp_prio = TOUCH
         self.regs = {motor: {} for motor in MOTORS}        # last written SRAM attributes
@@ -347,6 +406,9 @@ class Daemon:
                 data = json.load(saved)
             self.volume = max(0, min(100, int(data.get("volume", 100))))
             self.muted = bool(data.get("muted", False))
+            for device, rate in data.get("chip_rate", {}).items():
+                if device in MOTORS.values() and RATE <= float(rate) < RATE * 1.05:
+                    CHIP_RATE[device] = float(rate)
         except (OSError, ValueError, TypeError):
             pass
 
@@ -354,7 +416,8 @@ class Daemon:
         try:
             os.makedirs(STATE_DIR, exist_ok=True)
             with open(f"{STATE_DIR}/settings.json.new", "w") as saved:
-                json.dump({"volume": self.volume, "muted": self.muted}, saved)
+                json.dump({"volume": self.volume, "muted": self.muted,
+                           "chip_rate": {d: round(r, 1) for d, r in CHIP_RATE.items()}}, saved)
             os.replace(f"{STATE_DIR}/settings.json.new", f"{STATE_DIR}/settings.json")
         except OSError as error:
             print(f"settings: {error}", file=sys.stderr)
@@ -406,14 +469,27 @@ class Daemon:
             self.stats["invalid"] += 1
             return "invalid"
         name, percent, motor = words[0], 100, None
+        if name == "morse":
+            text = words[1].upper() if len(words) == 2 else ""
+            if not 0 < len(text) <= 3 or any(ch not in MORSE for ch in text):
+                self.stats["invalid"] += 1
+                return "invalid"
+            result = self.decide(PRIORITY["morse"])
+            if result == "play":
+                self.start_pattern("morse", 100, None, morse_pattern(text))
+            self.emit(effect=f"morse {text}", source=source, result=result,
+                      ms=round((time.monotonic() - started) * 1000, 2))
+            return result
         for word in words[1:]:
             if word.isdigit():
                 percent = max(0, min(100, int(word)))
-            elif word in ("top", "bottom", "both"):
+            elif word in ("top", "bottom", "both") or word in SCREEN_SIDES:
                 motor = BOTH if word == "both" else (word,)
             else:
                 self.stats["invalid"] += 1
                 return "invalid"
+        if name not in PATTERNS and self.catalog.get(name) is None and name in FALLBACKS:
+            name = FALLBACKS[name]
         if name == "charger":
             name = self.charger_event()
             if name is None:
@@ -461,15 +537,18 @@ class Daemon:
         self.stats["played"] += 1
         return "play"
 
-    def start_pattern(self, name, percent, motor):
-        pattern = PATTERNS[name]
-        if name.startswith("swipe-"):
-            sides = self.sides()
-            pattern = tuple((d, g, sides[m[0]]) for d, g, m in pattern)
+    def start_pattern(self, name, percent, motor, pattern=None):
+        # normalise steps to (delay ms, gain, motors, pulse ms)
+        pattern = tuple(step if len(step) == 4 else (*step, PULSE_MS)
+                        for step in (pattern or PATTERNS[name]))
         if motor:
-            pattern = tuple((d, g, motor) for d, g, _ in pattern)
+            pattern = tuple((d, g, motor, ms) for d, g, _, ms in pattern)
+        if any(m in SCREEN_SIDES for step in pattern for m in step[2]):
+            sides = self.sides()
+            pattern = tuple((d, g, tuple(dict.fromkeys(x for m in motors for x in sides.get(m, (m,)))), ms)
+                            for d, g, motors, ms in pattern)
         scale = percent * self.volume / 10000
-        pattern = tuple((d, max(1, round(g * scale)), m) for d, g, m in pattern)
+        pattern = tuple((d, max(1, round(g * scale)), m, ms) for d, g, m, ms in pattern)
         self.token += 1
         self.active = (name, PRIORITY[name], self.token)
         self.step(pattern, 0, self.token)
@@ -477,41 +556,59 @@ class Daemon:
     def step(self, pattern, index, token):
         if not self.active or self.active[2] != token:
             return
-        _, gain, motors = pattern[index]
+        _, gain, motors, length = pattern[index]
         for motor in motors:
-            self.workers[motor].put(gain)
+            self.workers[motor].put((gain, length))
         if index + 1 < len(pattern):
             self.after(pattern[index + 1][0], lambda: self.step(pattern, index + 1, token))
         else:
-            self.after(PULSE_MS, lambda: self.finish(token))
+            self.after(length, lambda: self.finish(token))
 
     def motor_worker(self, motor, jobs):
         """One thread per motor: the motors sit on separate I2C buses, and a
         kernel "activate" costs 3-6 ms, so both start together, not in turn."""
         while True:
-            gain = jobs.get()
-            if gain is None:          # an RTP stream finished: forget the registers
+            job = jobs.get()
+            if job is None:           # an RTP stream finished: forget the registers
                 self.regs[motor].clear()
                 continue
             try:
-                self.pulse(motor, gain)
+                self.pulse(motor, *job)
             except OSError as error:
                 print(f"{motor} pulse: {error}", file=sys.stderr)
 
-    def pulse(self, motor, gain):
+    def pulse(self, motor, gain, length=PULSE_MS):
         """One SRAM pulse; level/index/duration only when they changed."""
         device, cache, now = MOTORS[motor], self.regs[motor], time.monotonic()
         if now - cache.get("at", float("-inf")) > REG_CACHE_S:
             cache.clear()       # feedbackd and RTP also program these registers
         if now < self.busy_until[motor]:
             put(device, "activate", 0)
-        for attr, value in (("level", gain), ("index", WAVEFORM), ("duration", PULSE_MS)):
+        for attr, value in (("level", gain), ("index", WAVEFORM), ("duration", length)):
             if cache.get(attr) != value:
                 put(device, attr, value)
                 cache[attr] = value
         put(device, "activate", 1)
         cache["at"] = now
-        self.busy_until[motor] = now + PULSE_MS / 1000
+        self.busy_until[motor] = now + length / 1000
+
+    # --- battery thresholds -----------------------------------------------------
+    def battery_tick(self):
+        """Every minute: heartbeat when charging reaches 80 % (where bypass
+        charging would hold it), a firm double pulse when discharging reaches
+        15 %. The first reading after start only records."""
+        self.after(60000, self.battery_tick)
+        level, status = read(BATTERY + "/capacity"), read(BATTERY + "/status")
+        if level is None or not level.isdigit():
+            return
+        level, charging = int(level), status == "Charging"
+        last, self.battery_last = self.battery_last, (level, charging)
+        if last is None:
+            return
+        if charging and last[0] < 80 <= level:
+            self.request("heartbeat", "battery")
+        elif not charging and last[0] > 15 >= level:
+            self.request("low-battery", "battery")
 
     def finish(self, token):
         if self.active and self.active[2] == token:
@@ -568,6 +665,9 @@ class Daemon:
             pass
         for jobs in self.workers.values():   # an RTP stream reprogrammed the motors
             jobs.put(None)
+        if chip_rate_learned.is_set():
+            chip_rate_learned.clear()
+            self.save_settings()
 
     # --- inputs ---------------------------------------------------------------
     def on_fifo(self, fd, buf=bytearray()):
@@ -657,7 +757,9 @@ class Daemon:
         return {"volume": self.volume, "muted": self.muted,
                 "active": self.active[0] if self.active else ("rtp" if self.rtp and self.rtp.is_alive() else None),
                 "patterns": len(PATTERNS), "rtp_effects": len(self.catalog.effects),
-                "vendor_library": os.path.isdir(VENDOR), **self.stats}
+                "vendor_library": os.path.isdir(VENDOR),
+                "chip_rate": {os.path.basename(d): round(CHIP_RATE.get(d, CHIP_RATE_DEFAULT))
+                              for d in MOTORS.values()}, **self.stats}
 
     # --- main loop --------------------------------------------------------------
     def serve(self, fds):

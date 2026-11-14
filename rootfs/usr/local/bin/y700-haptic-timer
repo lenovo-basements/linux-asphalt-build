@@ -1,0 +1,52 @@
+#!/bin/bash
+# y700-haptic-timer: silent timers and alarms on the haptic motors (y700-hapticd).
+#
+#   y700-haptic-timer DURATION [EFFECT]     e.g. 25m, 90s, 1h30m   (default: success)
+#   y700-haptic-timer at HH:MM [EFFECT]     next HH:MM today/tomorrow (default: lullaby)
+#   y700-haptic-timer list
+#   y700-haptic-timer cancel NAME|all
+#
+# Transient systemd user timers: they survive closing the terminal, not a
+# reboot, and cannot wake the tablet from suspend (no CAP_WAKE_ALARM).
+# `y700-hapticctl stop` ends a long alarm track early.
+set -euo pipefail
+
+prefix=y700-timer
+usage() { sed -n '2,12s/^# \{0,1\}//p' "$0"; exit 2; }
+fire() {   # unit-name seconds effect description
+    systemd-run --user --quiet --collect --unit="$1" --on-active="$2" \
+        --description="$4" y700-haptic-event "$3"
+    echo "$1: $4"
+}
+
+case "${1:-}" in
+list)
+    systemctl --user list-timers --all "${prefix}-*" --no-pager
+    ;;
+cancel)
+    [[ $# -eq 2 ]] || usage
+    if [[ $2 == all ]]; then
+        mapfile -t units < <(systemctl --user list-units --plain --no-legend "${prefix}-*.timer" | awk '{print $1}')
+    else
+        units=("${2%.timer}.timer")
+    fi
+    ((${#units[@]})) && systemctl --user stop "${units[@]}" || true
+    ;;
+at)
+    [[ $# -ge 2 && $2 =~ ^([01]?[0-9]|2[0-3]):([0-5][0-9])$ ]] || usage
+    effect=${3:-lullaby}
+    now=$(date +%s)
+    target=$(date -d "today $2" +%s)
+    ((target > now)) || target=$(date -d "tomorrow $2" +%s)
+    fire "${prefix}-alarm-$(date -d "@$target" +%H%M)" "$((target - now))s" "$effect" \
+        "alarm at $(date -d "@$target" '+%a %H:%M') -> $effect"
+    ;;
+""|-h|--help)
+    usage
+    ;;
+*)
+    [[ $1 =~ ^([0-9]+[smh])+$ ]] || usage
+    effect=${2:-success}
+    fire "${prefix}-$(date +%H%M%S)" "$1" "$effect" "timer $1 -> $effect"
+    ;;
+esac

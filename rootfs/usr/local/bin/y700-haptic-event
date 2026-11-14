@@ -8,12 +8,14 @@ Usage: y700-haptic-event EVENT
        y700-haptic-event --after-exit PID EVENT   (e.g. unlock when gtklock exits)
 """
 import os
+import re
 import select
 import socket
 import sys
 
 SOCKET = os.environ.get("SOCKET", "/run/y700-haptic-rtp.sock")
-NAMES = ("notify", "charge-on", "charge-off", "lock", "unlock", "login", "charger")
+# Any effect name y700-hapticd knows (it validates); just keep it a plain word.
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
 
 def send(event):
@@ -30,7 +32,7 @@ def main(argv):
     if len(argv) == 4 and argv[1] == "--after-exit" and argv[2].isdigit():
         pid = int(argv[2])
         argv = argv[:1] + argv[3:]
-    if len(argv) != 2 or argv[1] not in NAMES:
+    if len(argv) != 2 or not NAME.match(argv[1]):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     if pid is not None:
