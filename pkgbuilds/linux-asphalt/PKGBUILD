@@ -1,0 +1,47 @@
+# Kernel for the Lenovo Legion Y700 Gen 2 (TB320FC), packaged from a finished
+# scripts/kernel/build-kernel.sh + package-boot.py output directory (kernels
+# are built on the Mac with clang/LLVM=1). Nothing here flashes anything:
+#
+#   ASPHALT_KERNEL_BUILD=/path/to/bringup-artifacts/<build> makepkg -f
+#
+# Installs the modules, plus Image, DTBs and the packaged boot images under
+# /usr/lib/modules/<release>/ for reference. ABL boots boot + vendor_boot from
+# their partitions, so a new kernel still means the owner flashes flash/*.img.
+pkgname=linux-asphalt
+_build="${ASPHALT_KERNEL_BUILD:?set ASPHALT_KERNEL_BUILD to a build-kernel.sh output dir}"
+_release="$(<"$_build/kernel.release")"
+# 7.4.0-rc2-y700-pen-20261114+ -> 7.4.0.rc2.y700.pen.20261114
+pkgver="$(sed 's/+$//; s/-/./g' <<<"$_release")"
+pkgrel=1
+pkgdesc="Linux kernel and modules for the Lenovo Legion Y700 Gen 2 (TB320FC)"
+arch=(aarch64)
+url="https://github.com/lenovo-basements/lenovo-sm8475-mainline"
+license=(GPL-2.0-only)
+depends=(kmod)
+makedepends=(kmod)
+optdepends=('asphalt-firmware: device firmware the drivers load')
+provides=(linux)
+options=(!strip !debug)
+
+package() {
+  local mod="$pkgdir/usr/lib/modules/$_release"
+  install -d "$pkgdir/usr/lib/modules"
+  cp -a "$_build/modules-root/usr/lib/modules/$_release" "$pkgdir/usr/lib/modules/"
+  # build/source point into the Mac's tree.
+  rm -f "$mod/build" "$mod/source"
+  rm -f "$mod"/._* 2>/dev/null || true
+
+  install -Dm644 "$_build/Image" "$mod/Image"
+  install -Dm644 "$_build/kernel.config" "$mod/config"
+  install -Dm644 "$_build/sm8475-lenovo-tb320fc.dtb" "$mod/dtbs/qcom/sm8475-lenovo-tb320fc.dtb"
+  install -Dm644 "$_build/sm8475-lenovo-tb320fc-abl.dtb" "$mod/dtbs/qcom/sm8475-lenovo-tb320fc-abl.dtb"
+  if [[ -d "$_build/flash" ]]; then
+    install -d "$mod/asphalt-boot"
+    install -m644 "$_build"/flash/{boot.img,vendor_boot.img,manifest.json,SHA256SUMS} "$mod/asphalt-boot/"
+    install -m644 "$_build/flash/FLASHING.txt" "$mod/asphalt-boot/" 2>/dev/null || true
+  fi
+  # The build output has no modules.dep (depmod ran on the tablet before).
+  depmod -b "$pkgdir/usr" "$_release"
+  # pkgbase lets mkinitcpio-style tooling find the owner of this module dir.
+  echo "$pkgname" > "$mod/pkgbase"
+}

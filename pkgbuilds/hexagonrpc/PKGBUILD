@@ -1,0 +1,31 @@
+# FastRPC server for the Hexagon DSPs (sensors on the SDSP), with the owner's
+# local changes. Upstream's units aren't installed: asphalt-device-support
+# ships hexagonrpcd-sdsp.service (fastrpc user, sensor registry ordering).
+pkgname=hexagonrpc
+pkgver=0.5.r0.gda7a374
+pkgrel=1
+_commit=da7a3742ab8d5273a281b70ee11f16fb2cb6a690
+pkgdesc="FastRPC server and library for Qualcomm Hexagon DSPs"
+arch=(aarch64)
+url="https://github.com/linux-msm/hexagonrpc"
+license=(GPL-3.0-or-later)
+depends=(glibc)
+makedepends=(git meson)
+source=("git+$url.git#commit=$_commit"
+        hexagonrpc-local.patch)
+sha256sums=(SKIP SKIP)
+
+prepare() {
+  cd hexagonrpc
+  patch -Np1 -i ../hexagonrpc-local.patch
+}
+
+build() {
+  arch-meson hexagonrpc build
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  rm -rf "$pkgdir/usr/lib/systemd"
+}

@@ -1,0 +1,35 @@
+# Snapdragon Sensor Core shell (lid sensor, suspend hooks) + sscregistrygen.
+# Upstream 2.1.1 plus the local commit 6dabfdd (never pushed; run_cmd_watch
+# argv fix + line buffering) and the -w wakeup flag.
+pkgname=sensh
+pkgver=2.1.1
+pkgrel=1
+_commit=560b48080283fe73ca5e67635b566177028cebc9
+pkgdesc="Shell for Qualcomm Snapdragon Sensor Core sensors"
+arch=(aarch64)
+url="https://gitlab.com/flamingradian/sensh"
+license=(GPL-3.0-or-later)
+depends=(protobuf-c qrtr json-c)
+makedepends=(git meson)
+source=("git+$url.git#commit=$_commit"
+        sensh-0001-run_cmd_watch-argv-line-buffering.patch
+        sensh-local.patch)
+sha256sums=(SKIP SKIP SKIP)
+
+prepare() {
+  cd sensh
+  patch -Np1 -i ../sensh-0001-run_cmd_watch-argv-line-buffering.patch
+  patch -Np1 -i ../sensh-local.patch
+}
+
+build() {
+  arch-meson sensh build
+  meson compile -C build
+  # tools/ has a two-line Makefile that hardcodes gcc.
+  ${CC:-cc} $CFLAGS $LDFLAGS -o build/sscregistrygen sensh/tools/sscregistrygen.c -ljson-c
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm755 build/sscregistrygen -t "$pkgdir/usr/bin/"
+}

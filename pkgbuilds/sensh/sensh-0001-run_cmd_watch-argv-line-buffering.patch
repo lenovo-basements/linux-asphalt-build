@@ -1,0 +1,44 @@
+From 6dabfdd8df00a22c92819d94aa29b109d753e448 Mon Sep 17 00:00:00 2001
+From: lolipuru <banstellazz@gmail.com>
+Date: Tue, 20 Oct 2026 03:19:07 +0700
+Subject: [PATCH] Fix argv index in run_cmd_watch and enable line buffering
+
+---
+ sensh.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/sensh.c b/sensh.c
+index 304af60..196a79a 100644
+--- a/sensh.c
++++ b/sensh.c
+@@ -185,7 +185,7 @@ void sns_send_request(struct qrtr_client_ctx *ctx, SnsStdSuid *suid, uint32_t ms
+ 
+ 	sns_client_request_msg__pm_config__init(&pm_config);
+ 	pm_config.client_proc_type = 1;
+-	pm_config.delivery_type = 0;
++	pm_config.delivery_type = 1;
+ 
+ 	sns_client_request_msg__body__init(&body);
+ 	body.has_is_passive = 1;
+@@ -420,7 +420,7 @@ static void run_cmd_watch(struct qrtr_client_ctx *ctx, int argc, char **argv) {
+ 
+ 	sns_std_suid__init(&suid);
+ 
+-	for (i = 0; i < argc; i++) {
++	for (i = 1; i < argc; i++) {
+ 		sns_parse_suid(argv[i], &suid);
+ 		sns_send_watch_req(ctx, &suid);
+ 	}
+@@ -661,6 +661,9 @@ int main(int argc, char *argv[]) {
+ 	int opt, fd, ret;
+ 	int keep_open = 0;
+ 
++	setlinebuf(stdout);
++	setlinebuf(stderr);
++
+ 	while ((opt = getopt(argc, argv, "k")) != -1) {
+ 		if (opt == 'k') {
+ 			keep_open = 1;
+-- 
+2.56.0
+

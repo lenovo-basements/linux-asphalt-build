@@ -1,0 +1,60 @@
+# Touch gestures for Hyprland, at the commit the dotfiles' gestures.lua
+# targets (Lua API), with its bundled wf-touch (the code expects that
+# version's API). Plugins only work with the exact Hyprland build they were
+# compiled against, so this package depends on that exact hyprland version:
+# pacman refuses a Hyprland upgrade until hyprgrass is rebuilt (makepkg -f).
+#
+# Installs /usr/lib/hyprgrass/libhyprgrass.so plus libhyprgrass.json, the
+# same metadata install-touch-gestures wrote (gesture-control checks it).
+pkgname=hyprgrass
+pkgver=0.8.2.r0.g8ca1af7
+pkgrel=1
+_commit=8ca1af717d5b4ea1215a781df52bcef02d7b15e6
+pkgdesc="Hyprland plugin for touch gestures"
+arch=(aarch64)
+url="https://github.com/horriblename/hyprgrass"
+license=(BSD-3-Clause)
+makedepends=(git meson ninja cmake doctest glm hyprland pkgconf)
+source=("git+$url.git#commit=$_commit"
+        "git+https://github.com/WayfireWM/wf-touch.git"
+        abi-hash.cpp)
+sha256sums=(SKIP SKIP SKIP)
+
+prepare() {
+  cd hyprgrass
+  git submodule init
+  git config submodule.subprojects/wf-touch.url "$srcdir/wf-touch"
+  git -c protocol.file.allow=always submodule update
+}
+
+build() {
+  arch-meson hyprgrass build -D tests=enabled
+  meson compile -C build
+  # The ABI string gesture-control compares with `hyprctl version -j`'s abiHash.
+  # abi-hash.cpp copies Hyprland's format: stop if upstream changed it.
+  grep -qF 'std::format("{}_aq_{}_hu_{}_hg_{}_hc_{}_hlg_{}", GIT_COMMIT_HASH, stripPatch(AQUAMARINE_VERSION)' \
+    /usr/include/hyprland/src/plugins/PluginAPI.hpp ||
+    { echo "PluginAPI.hpp's ABI hash format changed: update abi-hash.cpp" >&2; return 1; }
+  ${CXX:-c++} -std=c++23 -I/usr/include -o build/abi-hash abi-hash.cpp
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  local hyprland_ver
+  hyprland_ver=$(pacman -Q hyprland | awk '{print $2}')
+  depends=("hyprland=$hyprland_ver")
+
+  install -Dm755 build/src/libhyprgrass.so -t "$pkgdir/usr/lib/hyprgrass/"
+  python - "$pkgdir/usr/lib/hyprgrass/libhyprgrass.json" "$(build/abi-hash)" "$_commit" \
+    "$(pkg-config --modversion hyprland)" \
+    "$(sed -n 's/^#define GIT_COMMIT_HASH *"\([0-9a-f]*\)".*/\1/p' /usr/include/hyprland/src/version.h)" <<'PY'
+import json, sys
+out, abi, plugin, version, commit = sys.argv[1:]
+json.dump({"abiHash": abi, "plugin_commit": plugin,
+           "hyprland_commit": commit, "hyprland_version": version}, open(out, "w"))
+PY
+  install -Dm644 hyprgrass/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

@@ -7,9 +7,13 @@ USERNAME="alarm"
 PASSWORD=""
 HOSTNAME="y700"
 TARBALL_PATH=""
-ENABLE_GNOME=1
+DESKTOP="none"
 ENABLE_AUTOLOGIN=1
 FIRMWARE_SRC=""
+GREETER_INSTALL=""
+EXTRA_PACKAGES=""
+USER_SHELL="/bin/bash"
+SSH_KEY=""
 
 usage() {
     cat <<EOF
@@ -22,8 +26,17 @@ Options:
   --hostname <name>      System hostname (default: y700)
   --tarball <path>       Path to existing ArchLinuxARM-aarch64-latest.tar.gz
   --firmware-dir <path>  Path to asphalt-firmware repository
-  --no-gnome             Do not install GNOME desktop environment
-  --no-autologin         Do not enable automatic login in GDM
+  --desktop <name>       none (default: console login on tty1, no desktop),
+                         gnome, or hyprland
+  --no-gnome             Same as --desktop none (kept for old scripts)
+  --no-autologin         Desktops only: no automatic login (GDM, or greetd
+                         for hyprland). The console always asks for a login.
+  --greeter <script>     hyprland: run this greeter installer (e.g. the
+                         dotfiles' greeter/install-greeter) instead of autologin
+  --extra-packages <file>  Also install the packages listed in <file>
+                         (whitespace-separated, # comments)
+  --shell <path>         Login shell for the user (default: /bin/bash)
+  --ssh-key <file>       Enable sshd, key-only, with this authorized_keys file
   -h, --help             Show this help message
 EOF
     exit 0
@@ -55,9 +68,29 @@ while [[ $# -gt 0 ]]; do
             FIRMWARE_SRC="$2"
             shift 2
             ;;
+        --desktop)
+            DESKTOP="$2"
+            shift 2
+            ;;
         --no-gnome)
-            ENABLE_GNOME=0
+            DESKTOP="none"
             shift
+            ;;
+        --greeter)
+            GREETER_INSTALL="$2"
+            shift 2
+            ;;
+        --extra-packages)
+            EXTRA_PACKAGES="$2"
+            shift 2
+            ;;
+        --shell)
+            USER_SHELL="$2"
+            shift 2
+            ;;
+        --ssh-key)
+            SSH_KEY="$2"
+            shift 2
             ;;
         --no-autologin)
             ENABLE_AUTOLOGIN=0
@@ -78,6 +111,23 @@ if [[ -z "$TARGET_ROOT" ]]; then
     usage
 fi
 
+case "$DESKTOP" in
+    gnome|hyprland|none) ;;
+    *) echo "Error: --desktop must be gnome, hyprland or none." >&2; exit 1 ;;
+esac
+if [[ -n "$GREETER_INSTALL" && "$DESKTOP" != hyprland ]]; then
+    echo "Error: --greeter needs --desktop hyprland." >&2
+    exit 1
+fi
+ENABLE_GNOME=0
+[[ "$DESKTOP" == gnome ]] && ENABLE_GNOME=1
+for f in "$GREETER_INSTALL" "$EXTRA_PACKAGES" "$SSH_KEY"; do
+    if [[ -n "$f" && ! -f "$f" ]]; then
+        echo "Error: $f not found." >&2
+        exit 1
+    fi
+done
+
 if [[ "$EUID" -ne 0 ]]; then
     echo "Error: This script must be run as root (or with sudo)." >&2
     exit 1
@@ -97,13 +147,23 @@ fi
 
 mkdir -p "$TARGET_ROOT"
 
+# arch-chroot mounts /proc, /dev, ... for package hooks; plain chroot is the
+# fallback. pacman also wants the target to be a mount point (free-space
+# check), so a plain directory gets bind-mounted onto itself for the build.
+CHROOT=(chroot)
+command -v arch-chroot >/dev/null 2>&1 && CHROOT=(arch-chroot)
+if command -v mountpoint >/dev/null 2>&1 && ! mountpoint -q "$TARGET_ROOT"; then
+    mount --bind "$TARGET_ROOT" "$TARGET_ROOT"
+    trap 'umount "$TARGET_ROOT" 2>/dev/null || true' EXIT
+fi
+
 echo "=== [1/8] Installing packages into target rootfs ==="
 
 CORE_PKGS=(
-    base base-devel sudo networkmanager i2c-tools
+    base base-devel archlinuxarm-keyring sudo networkmanager i2c-tools
     zsh bash fish nano vim git htop wget curl
     parted e2fsprogs f2fs-tools dosfstools exfatprogs
-    linux-firmware wireless-regdb iw
+    wireless-regdb iw openssh
     bluez bluez-utils
     mesa vulkan-freedreno
     pipewire pipewire-pulse pipewire-alsa pipewire-libcamera wireplumber rtkit alsa-utils alsa-ucm-conf libcamera v4l-utils
@@ -120,7 +180,23 @@ if [[ "$ENABLE_GNOME" -eq 1 ]]; then
     )
 fi
 
-ALL_PKGS=("${CORE_PKGS[@]}" "${GNOME_PKGS[@]}")
+# Hyprland desktop: greetd, Quickshell, and the touch pieces (on-screen
+# keyboard + its haptics, polkit agent, portals).
+HYPR_PKGS=()
+if [[ "$DESKTOP" == hyprland ]]; then
+    HYPR_PKGS=(
+        hyprland xdg-desktop-portal-hyprland hyprpolkitagent hypridle
+        greetd quickshell mako fuzzel kitty squeekboard feedbackd gtklock
+        wl-clipboard grim nautilus gnome-keyring xdg-user-dirs dconf polkit
+    )
+fi
+
+EXTRA_PKGS=()
+if [[ -n "$EXTRA_PACKAGES" ]]; then
+    mapfile -t EXTRA_PKGS < <(sed 's/#.*//' "$EXTRA_PACKAGES" | tr -s '[:space:]' '\n' | sed '/^$/d')
+fi
+
+ALL_PKGS=("${CORE_PKGS[@]}" "${GNOME_PKGS[@]}" "${HYPR_PKGS[@]}" "${EXTRA_PKGS[@]}")
 
 if command -v pacstrap >/dev/null 2>&1; then
     echo "Using pacstrap with package cache..."
@@ -145,9 +221,9 @@ else
 
     echo "Initializing pacman keys..."
     cp /etc/resolv.conf "${TARGET_ROOT}/etc/resolv.conf"
-    chroot "$TARGET_ROOT" pacman-key --init
-    chroot "$TARGET_ROOT" pacman-key --populate archlinuxarm
-    chroot "$TARGET_ROOT" pacman -Syu --noconfirm --needed "${ALL_PKGS[@]}"
+    "${CHROOT[@]}" "$TARGET_ROOT" pacman-key --init
+    "${CHROOT[@]}" "$TARGET_ROOT" pacman-key --populate archlinuxarm
+    "${CHROOT[@]}" "$TARGET_ROOT" pacman -Syu --noconfirm --needed "${ALL_PKGS[@]}"
 fi
 
 LOCAL_PKGS=()
@@ -160,14 +236,14 @@ if [[ ${#LOCAL_PKGS[@]} -gt 0 ]]; then
     echo "Installing ${#LOCAL_PKGS[@]} local package(s) from pkgbuilds/out/..."
     mkdir -p "${TARGET_ROOT}/var/cache/asphalt-pkgs"
     cp "${LOCAL_PKGS[@]}" "${TARGET_ROOT}/var/cache/asphalt-pkgs/"
-    chroot "$TARGET_ROOT" sh -c 'pacman -U --noconfirm /var/cache/asphalt-pkgs/*.pkg.tar.*'
+    "${CHROOT[@]}" "$TARGET_ROOT" sh -c 'pacman -U --noconfirm /var/cache/asphalt-pkgs/*.pkg.tar.*'
     rm -rf "${TARGET_ROOT}/var/cache/asphalt-pkgs"
 fi
 
 # Account tools must retain their package setuid bits when extracting/copying
 # the rootfs. Without them chsh fails with setpwnam and passwd also breaks.
 for tool in chsh passwd; do
-    if ! chroot "$TARGET_ROOT" test -u "/usr/bin/$tool"; then
+    if ! "${CHROOT[@]}" "$TARGET_ROOT" test -u "/usr/bin/$tool"; then
         echo "Error: /usr/bin/$tool lost its package setuid permission in the target rootfs." >&2
         echo "Check extraction/copy ownership and reinstall util-linux/shadow in the target." >&2
         exit 1
@@ -186,34 +262,70 @@ EOF
 
 echo "=== [4/8] Configuring user '$USERNAME' ==="
 USER_GROUPS="wheel,video,audio,input,render,storage,network"
-if chroot "$TARGET_ROOT" id -u "$USERNAME" >/dev/null 2>&1; then
+if "${CHROOT[@]}" "$TARGET_ROOT" id -u "$USERNAME" >/dev/null 2>&1; then
     # e.g. the stock "alarm" user from the Arch Linux ARM tarball
-    chroot "$TARGET_ROOT" usermod -a -G "$USER_GROUPS" "$USERNAME"
+    "${CHROOT[@]}" "$TARGET_ROOT" usermod -a -G "$USER_GROUPS" "$USERNAME"
 else
-    chroot "$TARGET_ROOT" useradd -m -g users -G "$USER_GROUPS" -s /bin/bash "$USERNAME"
+    "${CHROOT[@]}" "$TARGET_ROOT" useradd -m -g users -G "$USER_GROUPS" -s "$USER_SHELL" "$USERNAME"
 fi
+"${CHROOT[@]}" "$TARGET_ROOT" chsh -s "$USER_SHELL" "$USERNAME" >/dev/null
 
 mkdir -p "${TARGET_ROOT}/etc/sudoers.d"
 echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > "${TARGET_ROOT}/etc/sudoers.d/00-wheel-nopasswd"
 chmod 440 "${TARGET_ROOT}/etc/sudoers.d/00-wheel-nopasswd"
 
 # Default password is the username (Arch Linux ARM convention); change it.
-echo "${USERNAME}:${PASSWORD:-$USERNAME}" | chroot "$TARGET_ROOT" chpasswd
-echo "root:root" | chroot "$TARGET_ROOT" chpasswd
+echo "${USERNAME}:${PASSWORD:-$USERNAME}" | "${CHROOT[@]}" "$TARGET_ROOT" chpasswd
+echo "root:root" | "${CHROOT[@]}" "$TARGET_ROOT" chpasswd
 
 # microSD cards mount at /mnt/microsd (89-y700-microsd.rules); FAT/exFAT
 # files belong to the primary user.
 printf 'MICROSD_USER=%s\n' "$USERNAME" > "${TARGET_ROOT}/etc/y700-microsd.conf"
 
-echo "=== [5/8] Configuring GDM, Auto-Login & On-Screen Keyboard ==="
+echo "=== [5/8] Configuring services, desktop & login ==="
+# Every image needs these, whatever the desktop.
+systemctl --root="$TARGET_ROOT" enable NetworkManager.service bluetooth.service
+
+if [[ "$DESKTOP" == none ]]; then
+    # Console only: boot to a getty login prompt, nothing graphical waits.
+    systemctl --root="$TARGET_ROOT" set-default multi-user.target
+fi
+
+if [[ -n "$SSH_KEY" ]]; then
+    echo "Enabling sshd (key-only) for '$USERNAME'..."
+    USER_HOME=$("${CHROOT[@]}" "$TARGET_ROOT" getent passwd "$USERNAME" | cut -d: -f6)
+    install -d -m700 "${TARGET_ROOT}${USER_HOME}/.ssh"
+    install -m600 "$SSH_KEY" "${TARGET_ROOT}${USER_HOME}/.ssh/authorized_keys"
+    "${CHROOT[@]}" "$TARGET_ROOT" chown -R "$USERNAME:" "${USER_HOME}/.ssh"
+    mkdir -p "${TARGET_ROOT}/etc/ssh/sshd_config.d"
+    printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' \
+        > "${TARGET_ROOT}/etc/ssh/sshd_config.d/10-asphalt-keys-only.conf"
+    systemctl --root="$TARGET_ROOT" enable sshd.service
+fi
+
+if [[ "$DESKTOP" == hyprland ]]; then
+    systemctl --root="$TARGET_ROOT" set-default graphical.target
+    systemctl --root="$TARGET_ROOT" enable greetd.service
+    if [[ -n "$GREETER_INSTALL" ]]; then
+        bash "$GREETER_INSTALL" --root "$TARGET_ROOT" --user "$USERNAME"
+    else
+        # No touch greeter: agreety on the console (needs a keyboard), plus
+        # autologin straight into Hyprland unless --no-autologin.
+        mkdir -p "${TARGET_ROOT}/etc/greetd"
+        {
+            printf '[terminal]\nvt = 1\n\n[default_session]\n'
+            printf 'command = "agreety --cmd start-hyprland"\nuser = "greeter"\n'
+            if [[ "$ENABLE_AUTOLOGIN" -eq 1 ]]; then
+                printf '\n[initial_session]\ncommand = "start-hyprland"\nuser = "%s"\n' "$USERNAME"
+            fi
+        } > "${TARGET_ROOT}/etc/greetd/config.toml"
+    fi
+fi
+
 if [[ "$ENABLE_GNOME" -eq 1 ]]; then
     # Enable graphical target and GDM
     systemctl --root="$TARGET_ROOT" set-default graphical.target
     systemctl --root="$TARGET_ROOT" enable gdm.service
-
-    # Enable NetworkManager and Bluetooth
-    systemctl --root="$TARGET_ROOT" enable NetworkManager.service
-    systemctl --root="$TARGET_ROOT" enable bluetooth.service
 
     # GDM Auto-login
     if [[ "$ENABLE_AUTOLOGIN" -eq 1 ]]; then
@@ -265,16 +377,29 @@ auto-maximize=true
 center-new-windows=true
 EOF
 
-    chroot "$TARGET_ROOT" dconf update || true
+    "${CHROOT[@]}" "$TARGET_ROOT" dconf update || true
 fi
 
+has_pkg() { "${CHROOT[@]}" "$TARGET_ROOT" pacman -Q "$1" >/dev/null 2>&1; }
+
 echo "=== [6/8] Installing Legion Y700 device support ==="
-if [[ -f "${SCRIPT_DIR}/install-device-support.sh" ]]; then
+if has_pkg asphalt-device-support; then
+    # Packaged (pkgbuilds/asphalt-device-support): enable its preset set.
+    mapfile -t PRESET_UNITS < <(sed -n 's/^enable //p' \
+        "${TARGET_ROOT}/usr/lib/systemd/system-preset/80-asphalt.preset")
+    systemctl --root="$TARGET_ROOT" preset "${PRESET_UNITS[@]}"
+    install -m644 "${TARGET_ROOT}/usr/share/asphalt/tuned-ppd.conf" "${TARGET_ROOT}/etc/tuned/ppd.conf"
+elif [[ -f "${SCRIPT_DIR}/install-device-support.sh" ]]; then
     bash "${SCRIPT_DIR}/install-device-support.sh" --root "$TARGET_ROOT"
+    # Its getty drop-in autologins 'alarm' whatever --user says (and pacstrap
+    # roots have no 'alarm'): the console keeps a normal login prompt.
+    rm -rf "${TARGET_ROOT}/etc/systemd/system/getty@tty1.service.d"
 fi
 
 echo "=== [7/8] Installing device firmware ==="
-if [[ -n "$FIRMWARE_SRC" && -d "$FIRMWARE_SRC" ]]; then
+if has_pkg asphalt-firmware; then
+    echo "asphalt-firmware is installed as a package."
+elif [[ -n "$FIRMWARE_SRC" && -d "$FIRMWARE_SRC" ]]; then
     echo "Installing device-specific firmware from $FIRMWARE_SRC..."
     mkdir -p "${TARGET_ROOT}/lib/firmware"
     
@@ -288,7 +413,9 @@ if [[ -n "$FIRMWARE_SRC" && -d "$FIRMWARE_SRC" ]]; then
 fi
 
 echo "=== [8/8] Installing kernel modules ==="
-if [[ -d "/lib/modules" ]]; then
+if has_pkg linux-asphalt; then
+    echo "Kernel modules come from the linux-asphalt package."
+elif [[ -d "/lib/modules" ]]; then
     CURRENT_KVER="$(uname -r)"
     if [[ -d "/lib/modules/${CURRENT_KVER}" ]]; then
         echo "Copying running kernel modules (${CURRENT_KVER})..."
@@ -301,12 +428,12 @@ fi
 cat <<EOF > "${TARGET_ROOT}/etc/fstab"
 # /etc/fstab: static file system information
 # <file system>             <mount point>  <type>  <options>       <dump>  <pass>
-LABEL=y700-arch             /              ext4    rw,noatime      0       1
+LABEL=y700-arch             /              ext4    rw,noatime,x-systemd.growfs 0 1
 # Factory sensor calibration is copied into /var/lib on first sensor startup.
 /dev/disk/by-partlabel/persist /mnt/persist  ext4    ro,nofail       0       0
 EOF
-MICROSD_UID=$(chroot "$TARGET_ROOT" id -u "$USERNAME")
-MICROSD_GID=$(chroot "$TARGET_ROOT" id -g "$USERNAME")
+MICROSD_UID=$("${CHROOT[@]}" "$TARGET_ROOT" id -u "$USERNAME")
+MICROSD_GID=$("${CHROOT[@]}" "$TARGET_ROOT" id -g "$USERNAME")
 # File-manager re-mounts (udisks) follow this line to the microSD service's
 # path; the symlink comes from 89-y700-microsd.rules (FAT-family cards only,
 # the line carries uid/gid).
@@ -324,6 +451,11 @@ else
 fi
 echo "WARNING: root's password is 'root' and wheel has passwordless sudo."
 echo "         Change both passwords (passwd; sudo passwd root) before using a network."
-echo "Autologin:        $([ $ENABLE_AUTOLOGIN -eq 1 ] && echo 'Enabled' || echo 'Disabled')"
-echo "GNOME Desktop:    $([ $ENABLE_GNOME -eq 1 ] && echo 'Enabled' || echo 'Disabled')"
+if [[ "$DESKTOP" == none ]]; then
+    echo "Autologin:        No (console login prompt on tty1)"
+else
+    echo "Autologin:        $([ $ENABLE_AUTOLOGIN -eq 1 ] && echo 'Enabled' || echo 'Disabled')"
+fi
+echo "Desktop:          $DESKTOP$([ -n "$GREETER_INSTALL" ] && echo ' (touch greeter)')"
+echo "sshd:             $([ -n "$SSH_KEY" ] && echo 'Enabled, key-only' || echo 'Not enabled')"
 echo "==========================================================="

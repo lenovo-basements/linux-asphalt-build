@@ -1,0 +1,563 @@
+diff --git a/hexagonrpcd/apps_std.c b/hexagonrpcd/apps_std.c
+index 7172bf0..927472c 100644
+--- a/hexagonrpcd/apps_std.c
++++ b/hexagonrpcd/apps_std.c
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <errno.h>
++#include <fcntl.h>
+ #include <libhexagonrpc/error.h>
+ #include <stdio.h>
+ #include <stdint.h>
+@@ -150,6 +151,84 @@ static uint32_t apps_std_fseek(void *data,
+ 	return 0;
+ }
+ 
++struct temp_file_ctx {
++	int fd;
++};
++
++static void temp_file_close(void *fd_data)
++{
++	struct temp_file_ctx *ctx = fd_data;
++	if (ctx->fd >= 0)
++		close(ctx->fd);
++	free(ctx);
++}
++
++static ssize_t temp_file_read(struct hexagonfs_fd *fd, size_t size, void *out)
++{
++	struct temp_file_ctx *ctx = fd->data;
++	return read(ctx->fd, out, size);
++}
++
++static int temp_file_seek(struct hexagonfs_fd *fd, off_t off, int whence)
++{
++	struct temp_file_ctx *ctx = fd->data;
++	return lseek(ctx->fd, off, whence);
++}
++
++static int temp_file_stat(struct hexagonfs_fd *fd, struct stat *stats)
++{
++	struct temp_file_ctx *ctx = fd->data;
++	return fstat(ctx->fd, stats);
++}
++
++static ssize_t temp_file_write(struct hexagonfs_fd *fd, size_t size, const void *in)
++{
++	struct temp_file_ctx *ctx = fd->data;
++	return write(ctx->fd, in, size);
++}
++
++static struct hexagonfs_file_ops temp_file_ops = {
++	.close = temp_file_close,
++	.read = temp_file_read,
++	.write = temp_file_write,
++	.seek = temp_file_seek,
++	.stat = temp_file_stat,
++};
++
++static uint32_t apps_std_fwrite(void *data,
++				const struct fastrpc_io_buffer *inbufs,
++				struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	const struct {
++		uint32_t fd;
++		uint32_t buf_size;
++	} *first_in = inbufs[0].p;
++	struct {
++		uint32_t written;
++		uint32_t is_eof;
++	} *first_out = outbufs[0].p;
++	ssize_t ret;
++
++	ret = hexagonfs_write(ctx->fds, first_in->fd,
++			      inbufs[1].s, inbufs[1].p);
++	if (ret < 0) {
++		fprintf(stderr, "Could not write file: %s\n", strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("write(%u, %zu) -> %zd\n", first_in->fd,
++					 inbufs[1].s,
++					 ret);
++#endif
++
++	first_out->written = ret;
++	first_out->is_eof = 0;
++
++	return 0;
++}
++
+ static uint32_t apps_std_fopen_with_env(void *data,
+ 					const struct fastrpc_io_buffer *inbufs,
+ 					struct fastrpc_io_buffer *outbufs)
+@@ -167,12 +246,52 @@ static uint32_t apps_std_fopen_with_env(void *data,
+ 
+ 	rw_mode = ((const char *) inbufs[4].p)[0];
+ 	if (rw_mode == 'w' || rw_mode == 'a') {
+-		fprintf(stderr, "Tried to open %s for writing\n",
+-				(const char *) inbufs[3].p);
+-		return AEE_EUNSUPPORTED;
++		const char *filepath = (const char *) inbufs[3].p;
++		int real_fd = open(filepath, O_RDWR | O_CREAT | O_TRUNC, 0666);
++		if (real_fd < 0) {
++			real_fd = open("/tmp/fastrpc_temp.json", O_RDWR | O_CREAT | O_TRUNC, 0666);
++		}
++		if (real_fd < 0) {
++			fprintf(stderr, "Failed to create temp file for %s: %s\n",
++				filepath, strerror(errno));
++			return AEE_EFAILED;
++		}
++
++		struct temp_file_ctx *tctx = malloc(sizeof(*tctx));
++		if (!tctx) {
++			close(real_fd);
++			return AEE_ENOMEMORY;
++		}
++		tctx->fd = real_fd;
++
++		struct hexagonfs_fd *hfd = malloc(sizeof(*hfd));
++		if (!hfd) {
++			free(tctx);
++			close(real_fd);
++			return AEE_ENOMEMORY;
++		}
++		hfd->is_assigned = false;
++		hfd->up = NULL;
++		hfd->ops = &temp_file_ops;
++		hfd->data = tctx;
++
++		fd = hexagonfs_allocate_file_number(ctx->fds, hfd);
++		if (fd < 0) {
++			free(hfd);
++			free(tctx);
++			close(real_fd);
++			return AEE_EFAILED;
++		}
++#ifdef HEXAGONRPC_VERBOSE
++		printf("open write temp file %s -> %d (real_fd %d)\n", filepath, fd, real_fd);
++#endif
++		*out = fd;
++		return 0;
+ 	}
+ 
+-	if (!strcmp(inbufs[1].p, "ADSP_LIBRARY_PATH")) {
++	if (((const char *) inbufs[3].p)[0] == '/') {
++		dirfd = ctx->rootfd;
++	} else if (!strcmp(inbufs[1].p, "ADSP_LIBRARY_PATH")) {
+ 		dirfd = ctx->adsp_library_dirfd;
+ 	} else if (!strcmp(inbufs[1].p, "ADSP_AVS_CFG_PATH")) {
+ 		dirfd = ctx->adsp_avs_cfg_dirfd;
+@@ -351,6 +470,34 @@ static uint32_t apps_std_stat(void *data,
+ 	return 0;
+ }
+ 
++static uint32_t apps_std_frename(void *data,
++				 const struct fastrpc_io_buffer *inbufs,
++				 struct fastrpc_io_buffer *outbufs)
++{
++	const char *oldname = inbufs[1].p;
++	const char *newname = inbufs[2].p;
++	int ret;
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("rename(%s, %s)\n", oldname, newname);
++#endif
++
++	ret = rename(oldname, newname);
++	if (ret != 0) {
++		if (access("/tmp/fastrpc_temp.json", F_OK) == 0) {
++			ret = rename("/tmp/fastrpc_temp.json", newname);
++		}
++	}
++
++	if (ret != 0) {
++		fprintf(stderr, "Could not rename %s to %s: %s\n",
++			oldname, newname, strerror(errno));
++		return AEE_EFAILED;
++	}
++
++	return 0;
++}
++
+ struct fastrpc_interface *fastrpc_apps_std_init(struct hexagonfs_dirent *root)
+ {
+ 	struct fastrpc_interface *iface;
+@@ -420,7 +567,10 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 		.def = &apps_std_fread_def,
+ 		.impl = apps_std_fread,
+ 	},
+-	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_fwrite_def,
++		.impl = apps_std_fwrite,
++	},
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+@@ -465,10 +615,15 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 		.def = &apps_std_stat_def,
+ 		.impl = apps_std_stat,
+ 	},
++	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_frename_def,
++		.impl = apps_std_frename,
++	},
+ };
+ 
+ const struct fastrpc_interface apps_std_interface = {
+ 	.name = "apps_std",
+-	.n_procs = 32,
++	.n_procs = 34,
+ 	.procs = apps_std_procs,
+ };
+diff --git a/hexagonrpcd/hexagonfs.c b/hexagonrpcd/hexagonfs.c
+index bd9f353..6eb0725 100644
+--- a/hexagonrpcd/hexagonfs.c
++++ b/hexagonrpcd/hexagonfs.c
+@@ -81,7 +81,7 @@ static struct hexagonfs_fd *pop_dir(struct hexagonfs_fd *dir,
+ 	return up;
+ }
+ 
+-static int allocate_file_number(struct hexagonfs_fd **fds,
++int hexagonfs_allocate_file_number(struct hexagonfs_fd **fds,
+ 				struct hexagonfs_fd *fd)
+ {
+ 	size_t i;
+@@ -128,7 +128,7 @@ int hexagonfs_open_root(struct hexagonfs_fd **fds, struct hexagonfs_dirent *root
+ 	if (ret)
+ 		goto err;
+ 
+-	ret = allocate_file_number(fds, fd);
++	ret = hexagonfs_allocate_file_number(fds, fd);
+ 	if (ret < 0)
+ 		goto err;
+ 
+@@ -179,7 +179,7 @@ int hexagonfs_openat(struct hexagonfs_fd **fds, int rootfd, int dirfd, const cha
+ 	if (ret)
+ 		goto err;
+ 
+-	ret = allocate_file_number(fds, fd);
++	ret = hexagonfs_allocate_file_number(fds, fd);
+ 	if (ret)
+ 		goto err;
+ 
+@@ -244,6 +244,23 @@ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void
+ 	return fd->ops->read(fd, size, ptr);
+ }
+ 
++ssize_t hexagonfs_write(struct hexagonfs_fd **fds, int fileno, size_t size, const void *ptr)
++{
++	struct hexagonfs_fd *fd;
++
++	if (fileno < 0 || fileno >= HEXAGONFS_MAX_FD)
++		return -EBADF;
++
++	fd = fds[fileno];
++	if (fd == NULL)
++		return -EBADF;
++
++	if (fd->ops->write == NULL)
++		return -ENOSYS;
++
++	return fd->ops->write(fd, size, ptr);
++}
++
+ int hexagonfs_readdir(struct hexagonfs_fd **fds, int fileno, size_t ent_size, char *ent)
+ {
+ 	struct hexagonfs_fd *fd;
+diff --git a/hexagonrpcd/hexagonfs.h b/hexagonrpcd/hexagonfs.h
+index 7682604..6b1908e 100644
+--- a/hexagonrpcd/hexagonfs.h
++++ b/hexagonrpcd/hexagonfs.h
+@@ -40,6 +40,7 @@ struct hexagonfs_file_ops {
+ 		      struct hexagonfs_fd **out);
+ 	int (*readdir)(struct hexagonfs_fd *fd, size_t size, char *out);
+ 	ssize_t (*read)(struct hexagonfs_fd *fd, size_t size, void *ptr);
++	ssize_t (*write)(struct hexagonfs_fd *fd, size_t size, const void *ptr);
+ 	int (*stat)(struct hexagonfs_fd *fd, struct stat *stats);
+ 	int (*seek)(struct hexagonfs_fd *fd, off_t off, int whence);
+ };
+@@ -69,6 +70,7 @@ extern struct hexagonfs_file_ops hexagonfs_mapped_sysfs_ops;
+ extern struct hexagonfs_file_ops hexagonfs_plat_subtype_name_ops;
+ extern struct hexagonfs_file_ops hexagonfs_virt_dir_ops;
+ 
++int hexagonfs_allocate_file_number(struct hexagonfs_fd **fds, struct hexagonfs_fd *fd);
+ int hexagonfs_open_root(struct hexagonfs_fd **fds, struct hexagonfs_dirent *root);
+ int hexagonfs_openat(struct hexagonfs_fd **fds, int rootfd, int dirfd, const char *name);
+ int hexagonfs_close(struct hexagonfs_fd **fds, int fileno);
+@@ -77,5 +79,6 @@ int hexagonfs_fstat(struct hexagonfs_fd **fds, int fileno, struct stat *stats);
+ int hexagonfs_lseek(struct hexagonfs_fd **fds, int fileno, off_t pos, int whence);
+ int hexagonfs_readdir(struct hexagonfs_fd **fds, int fileno, size_t size, char *name);
+ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void *ptr);
++ssize_t hexagonfs_write(struct hexagonfs_fd **fds, int fileno, size_t size, const void *ptr);
+ 
+ #endif
+diff --git a/hexagonrpcd/hexagonfs_virt_dir.c b/hexagonrpcd/hexagonfs_virt_dir.c
+index eaba520..f0b19d4 100644
+--- a/hexagonrpcd/hexagonfs_virt_dir.c
++++ b/hexagonrpcd/hexagonfs_virt_dir.c
+@@ -21,6 +21,7 @@
+ 
+ #include <errno.h>
+ #include <stdbool.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/stat.h>
+@@ -46,16 +47,22 @@ static const struct hexagonfs_dirent *walk_dir(const struct hexagonfs_dirent *co
+ 	return *curr;
+ }
+ 
++struct virt_dir_ctx {
++	const struct hexagonfs_dirent *const *dirlist;
++	size_t index;
++};
++
+ static int virt_dir_from_dirent(const void *dirent_data, bool dir, void **fd_data)
+ {
+-	const struct hexagonfs_dirent *const **wrapper;
++	struct virt_dir_ctx *ctx;
+ 
+-	wrapper = malloc(sizeof(*wrapper));
+-	if (wrapper == NULL)
++	ctx = malloc(sizeof(*ctx));
++	if (ctx == NULL)
+ 		return -ENOMEM;
+ 
+-	*wrapper = dirent_data;
+-	*fd_data = wrapper;
++	ctx->dirlist = dirent_data;
++	ctx->index = 0;
++	*fd_data = ctx;
+ 
+ 	return 0;
+ }
+@@ -65,12 +72,12 @@ static int virt_dir_openat(struct hexagonfs_fd *dir,
+ 			   bool expect_dir,
+ 			   struct hexagonfs_fd **out)
+ {
+-	const struct hexagonfs_dirent *const **dirlist = dir->data;
++	struct virt_dir_ctx *dir_ctx = dir->data;
+ 	const struct hexagonfs_dirent *ent;
+ 	struct hexagonfs_fd *fd;
+ 	int ret;
+ 
+-	ent = walk_dir(*dirlist, segment);
++	ent = walk_dir(dir_ctx->dirlist, segment);
+ 	if (ent == NULL)
+ 		return -ENOENT;
+ 
+@@ -95,6 +102,36 @@ err:
+ 	return ret;
+ }
+ 
++static int virt_dir_readdir(struct hexagonfs_fd *fd, size_t size, char *out)
++{
++	struct virt_dir_ctx *ctx = fd->data;
++	const struct hexagonfs_dirent *ent;
++
++	ent = ctx->dirlist[ctx->index];
++	if (ent == NULL) {
++		out[0] = '\0';
++		return 0;
++	}
++
++	strncpy(out, ent->name, size);
++	out[size - 1] = '\0';
++	ctx->index++;
++
++	return 0;
++}
++
++static int virt_dir_seek(struct hexagonfs_fd *fd, off_t off, int whence)
++{
++	struct virt_dir_ctx *ctx = fd->data;
++
++	if (whence == SEEK_SET && off == 0) {
++		ctx->index = 0;
++		return 0;
++	}
++
++	return -ENOSYS;
++}
++
+ static void virt_dir_close(void *fd_data)
+ {
+ 	free(fd_data);
+@@ -110,7 +147,8 @@ static int virt_dir_stat(struct hexagonfs_fd *fd, struct stat *stats)
+ 	stats->st_ino = 0;
+ 	stats->st_nlink = 0;
+ 
+-	stats->st_mode = S_IRUSR | S_IXUSR
++	stats->st_mode = S_IFDIR
++		       | S_IRUSR | S_IXUSR
+ 		       | S_IRGRP | S_IXGRP
+ 		       | S_IROTH | S_IXOTH;
+ 
+@@ -128,5 +166,7 @@ struct hexagonfs_file_ops hexagonfs_virt_dir_ops = {
+ 	.close = virt_dir_close,
+ 	.from_dirent = virt_dir_from_dirent,
+ 	.openat = virt_dir_openat,
++	.readdir = virt_dir_readdir,
++	.seek = virt_dir_seek,
+ 	.stat = virt_dir_stat,
+ };
+diff --git a/hexagonrpcd/interface/apps_std.c b/hexagonrpcd/interface/apps_std.c
+index 67b3ace..fe60fae 100644
+--- a/hexagonrpcd/interface/apps_std.c
++++ b/hexagonrpcd/interface/apps_std.c
+@@ -75,6 +75,21 @@ const struct hrpc_method_def_interp4 apps_std_fread_def = {
+ 	.inner_types = NULL,
+ };
+ 
++static struct hrpc_arg_def_interp4 apps_std_fwrite_args[] = {
++	{ HRPC_ARG_WORD, sizeof(uint32_t) },
++	{ HRPC_ARG_BLOB_SEQ, sizeof(char) },
++	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
++	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
++};
++
++const struct hrpc_method_def_interp4 apps_std_fwrite_def = {
++	.msg_id = 5,
++	.n_args = HRPC_ARRAY_SIZE(apps_std_fwrite_args),
++	.args = apps_std_fwrite_args,
++	.n_inner_types = 0,
++	.inner_types = NULL,
++};
++
+ static struct hrpc_arg_def_interp4 apps_std_fseek_args[] = {
+ 	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+ 	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+@@ -182,3 +197,16 @@ const struct hrpc_method_def_interp4 apps_std_stat_def = {
+ 	.n_inner_types = 0,
+ 	.inner_types = NULL,
+ };
++
++static struct hrpc_arg_def_interp4 apps_std_frename_args[] = {
++	{ HRPC_ARG_BLOB_SEQ, sizeof(char) },
++	{ HRPC_ARG_BLOB_SEQ, sizeof(char) },
++};
++
++const struct hrpc_method_def_interp4 apps_std_frename_def = {
++	.msg_id = 33,
++	.n_args = HRPC_ARRAY_SIZE(apps_std_frename_args),
++	.args = apps_std_frename_args,
++	.n_inner_types = 0,
++	.inner_types = NULL,
++};
+diff --git a/hexagonrpcd/interface/apps_std.h b/hexagonrpcd/interface/apps_std.h
+index b80a1ca..0363b62 100644
+--- a/hexagonrpcd/interface/apps_std.h
++++ b/hexagonrpcd/interface/apps_std.h
+@@ -28,6 +28,7 @@ extern struct hrpc_method_def_interp4 apps_std_freopen_def;
+ extern struct hrpc_method_def_interp4 apps_std_fflush_def;
+ extern struct hrpc_method_def_interp4 apps_std_fclose_def;
+ extern struct hrpc_method_def_interp4 apps_std_fread_def;
++extern struct hrpc_method_def_interp4 apps_std_fwrite_def;
+ extern struct hrpc_method_def_interp4 apps_std_fseek_def;
+ extern struct hrpc_method_def_interp4 apps_std_fopen_with_env_def;
+ extern struct hrpc_method_def_interp4 apps_std_opendir_def;
+@@ -35,5 +36,6 @@ extern struct hrpc_method_def_interp4 apps_std_closedir_def;
+ extern struct hrpc_method_def_interp4 apps_std_readdir_def;
+ extern struct hrpc_method_def_interp4 apps_std_mkdir_def;
+ extern struct hrpc_method_def_interp4 apps_std_stat_def;
++extern struct hrpc_method_def_interp4 apps_std_frename_def;
+ 
+ #endif /* INTERFACE_APPS_STD_H */
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+index 3414974..a7e6064 100644
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -425,7 +425,7 @@ static int return_for_next_invoke(int fd,
+ 				  struct fastrpc_io_buffer **decoded)
+ {
+ 	struct fastrpc_decoder_context *ctx;
+-	char inbufs[256];
++	static char inbufs[65536];
+ 	char *outbufs = NULL;
+ 	uint32_t inbufs_len;
+ 	uint32_t outbufs_len;
+@@ -447,7 +447,7 @@ static int return_for_next_invoke(int fd,
+ 				  *rctx, result,
+ 				  outbufs_len, outbufs,
+ 				  rctx, handle, sc,
+-				  &inbufs_len, 256, inbufs);
++				  &inbufs_len, sizeof(inbufs), inbufs);
+ 	if (ret) {
+ 		if (ret == -1)
+ 			perror("Could not fetch next FastRPC message");
+@@ -457,8 +457,8 @@ static int return_for_next_invoke(int fd,
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	if (inbufs_len > 256) {
+-		fprintf(stderr, "Large (>256B) input buffers aren't implemented\n");
++	if (inbufs_len > sizeof(inbufs)) {
++		fprintf(stderr, "Large (>%zuB) input buffers aren't implemented\n", sizeof(inbufs));
+ 		ret = -1;
+ 		goto err_free_outbufs;
+ 	}
+diff --git a/hexagonrpcd/rpcd_builder.c b/hexagonrpcd/rpcd_builder.c
+index d374958..0e4b7a8 100644
+--- a/hexagonrpcd/rpcd_builder.c
++++ b/hexagonrpcd/rpcd_builder.c
+@@ -31,6 +31,7 @@
+ #define SENSORS_CONFIG		"/sensors/config/"
+ #define SENSORS_REGISTRY	"/sensors/registry/"
+ #define SNS_REG_CONFIG		"/sensors/sns_reg.conf"
++#define SNS_REG_VERSION		"/sensors/sns_reg_version"
+ #define SYSFS_SOCINFO		"/socinfo/"
+ 
+ static struct hexagonfs_dirent *hfs_mkdir(const char *name, size_t n_ents, ...)
+@@ -111,7 +112,7 @@ static struct hexagonfs_dirent *hfs_map_or_empty(const char *name, const char *p
+  */
+ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ {
+-	char *acdbdata, *dsp_libs, *sns_cfg, *sns_reg, *sns_reg_config, *socinfo;
++	char *acdbdata, *dsp_libs, *sns_cfg, *sns_reg, *sns_reg_config, *sns_reg_ver, *socinfo;
+ 	size_t n_prefix;
+ 	struct hexagonfs_dirent *persist_dir, *vendor_dir;
+ 
+@@ -121,6 +122,7 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 	sns_cfg = malloc(n_prefix + strlen(SENSORS_CONFIG) + 1);
+ 	sns_reg = malloc(n_prefix + strlen(SENSORS_REGISTRY) + 1);
+ 	sns_reg_config = malloc(n_prefix + strlen(SNS_REG_CONFIG) + 1);
++	sns_reg_ver = malloc(n_prefix + strlen(SNS_REG_VERSION) + 1);
+ 	socinfo = malloc(n_prefix + strlen(SYSFS_SOCINFO) + 1);
+ 
+ 	dsp_libs = malloc(n_prefix + strlen(DSP_LIBS) + strlen(dsp) + 1);
+@@ -145,6 +147,11 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 		strcat(sns_reg_config, SNS_REG_CONFIG);
+ 	}
+ 
++	if (sns_reg_ver != NULL) {
++		strcpy(sns_reg_ver, prefix);
++		strcat(sns_reg_ver, SNS_REG_VERSION);
++	}
++
+ 	if (socinfo != NULL) {
+ 		strcpy(socinfo, prefix);
+ 		strcat(socinfo, SYSFS_SOCINFO);
+@@ -161,10 +168,12 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 	 * a hard link between both locations.
+ 	 */
+ 	persist_dir = hfs_mkdir("persist", 1,
+-				hfs_mkdir("sensors", 1,
+-					hfs_mkdir("registry", 1,
+-						hfs_map("registry", sns_reg)
+-					)
++				hfs_mkdir("sensors", 2,
++					hfs_mkdir("registry", 2,
++						hfs_map("registry", sns_reg),
++						hfs_map_or_empty("sns_reg_version", sns_reg_ver)
++					),
++					hfs_map_or_empty("sns_reg_version", sns_reg_ver)
+ 				)
+ 		      );
+ 

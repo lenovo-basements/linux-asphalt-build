@@ -1,0 +1,35 @@
+diff --git a/sensh.c b/sensh.c
+index 196a79a..d5eea26 100644
+--- a/sensh.c
++++ b/sensh.c
+@@ -177,6 +177,8 @@ void sns_qmi_handle_message(struct qrtr_client_ctx *ctx, const struct qrtr_packe
+ 	}
+ }
+ 
++static int g_delivery_type = 0;
++
+ void sns_send_request(struct qrtr_client_ctx *ctx, SnsStdSuid *suid, uint32_t msg_id, void *payload, size_t payload_len) {
+ 	SnsClientRequestMsg__PmConfig pm_config;
+ 	SnsClientRequestMsg__Body body;
+@@ -185,7 +187,7 @@ void sns_send_request(struct qrtr_client_ctx *ctx, SnsStdSuid *suid, uint32_t ms
+ 
+ 	sns_client_request_msg__pm_config__init(&pm_config);
+ 	pm_config.client_proc_type = 1;
+-	pm_config.delivery_type = 1;
++	pm_config.delivery_type = g_delivery_type;
+ 
+ 	sns_client_request_msg__body__init(&body);
+ 	body.has_is_passive = 1;
+@@ -664,9 +666,11 @@ int main(int argc, char *argv[]) {
+ 	setlinebuf(stdout);
+ 	setlinebuf(stderr);
+ 
+-	while ((opt = getopt(argc, argv, "k")) != -1) {
++	while ((opt = getopt(argc, argv, "kw")) != -1) {
+ 		if (opt == 'k') {
+ 			keep_open = 1;
++		} else if (opt == 'w') {
++			g_delivery_type = 1;
+ 		}
+ 	}
+ 

@@ -1,0 +1,24 @@
+# Qualcomm IPC Router userspace: libqrtr + qrtr-cfg/qrtr-lookup (the name
+# service lives in the kernel). Needed by pd-mapper, hexagonrpcd and sensh.
+pkgname=qrtr
+pkgver=1.2.r0.g29e36ae
+pkgrel=1
+_commit=29e36ae164389580a0f8ea7a7fdb728140ae978d
+pkgdesc="Qualcomm IPC Router library and tools"
+arch=(aarch64)
+url="https://github.com/andersson/qrtr"
+license=(BSD-3-Clause)
+depends=(glibc)
+makedepends=(git meson)
+source=("git+$url.git#commit=$_commit")
+sha256sums=(SKIP)
+
+build() {
+  arch-meson qrtr build
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 qrtr/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

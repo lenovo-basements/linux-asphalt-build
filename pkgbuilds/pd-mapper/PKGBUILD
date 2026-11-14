@@ -1,0 +1,24 @@
+# Protection-domain mapper: the QMI service the ADSP/CDSP/SLPI query at boot.
+# Plain upstream, as the tablet ran it. Its unit comes from
+# asphalt-device-support, so upstream's isn't installed.
+pkgname=pd-mapper
+pkgver=r0.g5ecd2fe
+pkgrel=1
+_commit=5ecd2fe926aca7abfe40724177f63b942cff3947
+pkgdesc="Qualcomm protection domain mapper"
+arch=(aarch64)
+url="https://github.com/linux-msm/pd-mapper"
+license=(BSD-3-Clause)
+depends=(qrtr xz)
+makedepends=(git)
+source=("git+$url.git#commit=$_commit")
+sha256sums=(SKIP)
+
+build() {
+  make -C pd-mapper prefix=/usr
+}
+
+package() {
+  install -Dm755 pd-mapper/pd-mapper -t "$pkgdir/usr/bin/"
+  install -Dm644 pd-mapper/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

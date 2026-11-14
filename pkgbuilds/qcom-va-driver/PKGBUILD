@@ -1,0 +1,30 @@
+# VA-API on the Iris decoder (Brave, mpv, GStreamer). Built like the Debian
+# package: GPU surface copy + Vulkan VPP, CDSP VPP off. Also installs the
+# msm_drv_video.so alias libva picks by DRM driver name (no env needed).
+# Needs the radxa iris kernel patches (rc1-irisva and later).
+pkgname=qcom-va-driver
+pkgver=1.1.1.r0.g0980a1d
+pkgrel=1
+_commit=0980a1decf26d34c9aa71cd0a4a0d25703a7a17f
+pkgdesc="VA-API driver for Qualcomm Iris stateful V4L2 decoders"
+arch=(aarch64)
+url="https://github.com/radxa-pkg/qcom-va-driver"
+license=(MIT)
+depends=(libva libdrm libglvnd mesa vulkan-icd-loader)
+makedepends=(git meson glslang vulkan-headers)
+source=("git+$url.git#commit=$_commit")
+sha256sums=(SKIP)
+
+build() {
+  arch-meson qcom-va-driver build \
+    -D gpu_copy=enabled \
+    -D cdsp_vpp=disabled \
+    -D vulkan_vpp=enabled
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  rm -rf "$pkgdir/usr/share/licenses"
+  install -Dm644 qcom-va-driver/LICENSE* -t "$pkgdir/usr/share/licenses/$pkgname/" 2>/dev/null || true
+}
