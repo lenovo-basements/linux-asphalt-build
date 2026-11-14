@@ -67,7 +67,9 @@ FIRMWARE_DIR="${FIRMWARE_DIR:-${REPO_DIR}/../asphalt-firmware}"
 # 1. Install CLI utilities
 echo "[1/5] Installing user binaries..."
 mkdir -p "${TARGET_ROOT}/usr/local/bin"
-install -m 755 "${REPO_DIR}/rootfs/usr/local/bin/"* "${TARGET_ROOT}/usr/local/bin/"
+# Regular files only: a stray __pycache__ directory would abort install(1).
+find "${REPO_DIR}/rootfs/usr/local/bin" -maxdepth 1 -type f \
+    -exec install -m 755 -t "${TARGET_ROOT}/usr/local/bin/" {} +
 mkdir -p "${TARGET_ROOT}/usr/share/applications"
 install -m 644 "${REPO_DIR}/rootfs/usr/share/applications/y700-chromium.desktop" "${TARGET_ROOT}/usr/share/applications/"
 # Stock vendor sensor configs and the sensh tool live in the sibling
@@ -119,6 +121,11 @@ install -m 644 "${REPO_DIR}/rootfs/etc/systemd/system/"*.service "${TARGET_ROOT}
 install -m 644 "${REPO_DIR}/rootfs/etc/systemd/system/"*.socket "${TARGET_ROOT}/etc/systemd/system/"
 mkdir -p "${TARGET_ROOT}/etc/systemd/logind.conf.d"
 install -m 644 "${REPO_DIR}/rootfs/etc/systemd/logind.conf.d/"*.conf "${TARGET_ROOT}/etc/systemd/logind.conf.d/"
+install -m 644 "${REPO_DIR}/rootfs/etc/systemd/sleep.conf" "${TARGET_ROOT}/etc/systemd/sleep.conf"
+# WatchdogSec=0 for every service: a long suspend otherwise trips the
+# watchdogs of logind, udevd and journald on wake.
+mkdir -p "${TARGET_ROOT}/etc/systemd/system/service.d"
+install -m 644 "${REPO_DIR}/rootfs/etc/systemd/system/service.d/"*.conf "${TARGET_ROOT}/etc/systemd/system/service.d/"
 if [[ -d "${REPO_DIR}/rootfs/etc/systemd/system/getty@tty1.service.d" ]]; then
     mkdir -p "${TARGET_ROOT}/etc/systemd/system/getty@tty1.service.d"
     install -m 644 "${REPO_DIR}/rootfs/etc/systemd/system/getty@tty1.service.d/"*.conf "${TARGET_ROOT}/etc/systemd/system/getty@tty1.service.d/"
