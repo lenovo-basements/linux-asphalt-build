@@ -63,22 +63,32 @@ Note: this project will spilt into gentoo linux (replace arch linux arm) and nix
 
 ## Relock bootloader
 
-Are you fucking serious?
+I highly, highly **not recommend** you to do this or follow this section, however if you think it's good idea to relock bootloader (which giving you zero benefit), then i won't stop you.
 
-It’s doable — this tablet uses AVBv2 with avb-custom-keys support — but I can’t stop you.
+this tablet uses [AVBv2](https://android.googlesource.com/platform/external/avb/+/master/README.md) with avb-custom-keys support
 
 **Requirements**
 
-- Brain, and ability to read and think carefully
+- ability to read and think carefully
 - Actual knowledge of AOSP build systems
 - Understand how AVBv2 works
 - Know How to sign images with your own private key
 
-TO-DO, i didn't want some users report with bricked tablet
+**Warning**
+
+- ZUI is **NOT** support for relock bootloader, don't even dare trying it
+- **BACKUP** sn.img, persist.img and devinfo.img first (these 3 images are very important, one is serial number information (if it gone, you're fucked) persist contain sensors calibration and others data, third is device info, but better backup at first place). if thing went wrong, i'll take 0 responsible.
+- once you do this, you **must** sign images everytime you update kernel, are you sure you want to do this?
+- LineageOS is recommend target to relock bootloader, however, just pick whatever AOSP you like (PixelOS, EvolutionX or whatever.)
+- if you're using [armada os](https://github.com/armada-os/armada), or any distro that require to modified ABL **DO NOT** relock the bootloader
+- Relock bootloader will make your data disappear like a magic, backup first
+- if you're using ROW and any firmware that newer than 17.0.339 **DO NOT** relock the bootloader (AvbRSAPublicKey embedded in ABL make it risker to relock bootloader, [Source](https://miner7222.github.io/ltbox/en/index.html#supported-devices)), PRC? congratulations. you can relock pretty much almost all firmware versions
+
+TO-DO, i didn't want some users report with bricked tablet, the relock document will fully write once i done with pen bringup
 
 ## Dual booting
 
-doable, if you aren't stupid, it's possible by using slots B as
+doable, with some caveats.
 
 - ZUI* only take slots A, you can repartition userdata and use boot, dtbo and vendor_boot into slot b
 - if you want to dual boot with other OS like lineage, Crdroid or whatever you want, must be installed with fastboot packages
