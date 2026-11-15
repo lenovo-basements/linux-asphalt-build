@@ -1,0 +1,1 @@
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="white:flash", RUN+="/bin/sh -c 'chgrp video /sys%p/brightness && chmod 0664 /sys%p/brightness'"
