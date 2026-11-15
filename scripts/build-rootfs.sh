@@ -6,6 +6,7 @@ TARGET_ROOT=""
 USERNAME="alarm"
 PASSWORD=""
 HOSTNAME="asphalt"
+TIMEZONE="UTC"
 TARBALL_PATH=""
 DESKTOP="none"
 ENABLE_AUTOLOGIN=1
@@ -24,6 +25,7 @@ Options:
   --user <username>      Primary user to create (default: alarm, as on Arch Linux ARM)
   --password <password>  Password for that user (default: same as the username)
   --hostname <name>      System hostname (default: asphalt)
+  --timezone <zone>      tz database zone, e.g. Asia/Bangkok (default: UTC)
   --tarball <path>       Path to existing ArchLinuxARM-aarch64-latest.tar.gz
   --firmware-dir <path>  Path to asphalt-firmware repository
   --desktop <name>       none (default: console login on tty1, no desktop),
@@ -58,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --hostname)
             HOSTNAME="$2"
+            shift 2
+            ;;
+        --timezone)
+            TIMEZONE="$2"
             shift 2
             ;;
         --tarball)
@@ -283,8 +289,16 @@ echo "root:root" | "${CHROOT[@]}" "$TARGET_ROOT" chpasswd
 printf 'MICROSD_USER=%s\n' "$USERNAME" > "${TARGET_ROOT}/etc/asphalt-microsd.conf"
 
 echo "=== [5/8] Configuring services, desktop & login ==="
-# Every image needs these, whatever the desktop.
-systemctl --root="$TARGET_ROOT" enable NetworkManager.service bluetooth.service
+# Every image needs these, whatever the desktop. The PMIC RTC can't be set
+# from Linux (it reads 1970), so without NTP the clock only has systemd's
+# saved timestamp from the last shutdown.
+systemctl --root="$TARGET_ROOT" enable NetworkManager.service bluetooth.service \
+    systemd-timesyncd.service
+if [[ ! -e "${TARGET_ROOT}/usr/share/zoneinfo/${TIMEZONE}" ]]; then
+    echo "Unknown timezone: ${TIMEZONE}" >&2
+    exit 1
+fi
+ln -sfn "/usr/share/zoneinfo/${TIMEZONE}" "${TARGET_ROOT}/etc/localtime"
 
 if [[ "$DESKTOP" == none ]]; then
     # Console only: boot to a getty login prompt, nothing graphical waits.
