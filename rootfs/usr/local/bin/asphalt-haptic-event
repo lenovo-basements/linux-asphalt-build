@@ -5,7 +5,7 @@ Ask asphalt-hapticd (legacy datagram socket) to play an event effect. Best effor
 fails the caller when haptics are unavailable.
 
 Usage: asphalt-haptic-event EVENT
-       asphalt-haptic-event --after-exit PID EVENT   (e.g. unlock when gtklock exits)
+       asphalt-haptic-event --after-exit PID EVENT   (e.g. unlock when a locker exits)
 """
 import os
 import re

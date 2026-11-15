@@ -3,7 +3,10 @@
 set -euo pipefail
 state=/var/lib/qcom/sensors
 factory=/mnt/persist/sensors/registry
-install -d -m 755 "$state" /usr/share/qcom/sensors
+install -d -m 755 /usr/share/qcom/sensors
+
+install -d -o fastrpc -g fastrpc -m 755 "$state"
+chown fastrpc:fastrpc "$state"
 if [[ ! -d "$state/registry" ]]; then
     if ! mountpoint -q /mnt/persist || [[ ! -f "$factory/registry/sns_reg_config" ]]; then
         echo "Mount the tablet's original persist partition at /mnt/persist before initializing sensors." >&2
@@ -32,3 +35,23 @@ for link in /usr/share/qcom/sensors/registry /mnt/vendor/persist/sensors/registr
     ln -sfnT "$state/registry" "$link"
 done
 ln -sfnT "$state/sns_reg_version" /usr/share/qcom/sensors/sns_reg_version
+
+dt_word() { od -An -tu4 --endian=big -N4 "/proc/device-tree/$1" | tr -d ' '; }
+soc_id=$(dt_word qcom,msm-id)
+board=$(dt_word qcom,board-id)
+case $(( board & 0xff )) in
+    1) platform=Surf ;;  2) platform=FFA ;;   3) platform=Fluid ;;
+    8) platform=MTP ;;   10) platform=Dragon ;; 11) platform=QRD ;;
+    21) platform=RCM ;;  31) platform=HDK ;;  34) platform=IDP ;;
+    *) echo "Unknown platform type $(( board & 0xff )) in qcom,board-id" >&2; exit 1 ;;
+esac
+socinfo="$state/socinfo"
+install -d -m 755 "$socinfo"
+printf '%s\n' "$platform" > "$socinfo/hw_platform"
+printf '%s\n' "$soc_id" > "$socinfo/soc_id"
+link=/usr/share/qcom/socinfo
+if [[ -e "$link" && ! -L "$link" ]]; then
+    echo "Refusing to replace existing socinfo directory: $link" >&2
+    exit 1
+fi
+ln -sfnT "$socinfo" "$link"
