@@ -27,21 +27,21 @@ Scripts and device support for running **Arch Linux ARM** on the
 
 | Component | Notes |
 | --- | --- |
-| **Audio** | Cirrus Logic CS35L45, available upstream |
-| **Wi-Fi / Bluetooth** | WCN6855, upstream code |
+| **Audio** | Cirrus Logic CS35L45, using available upstream, the rest are standard `ALSA` and `UCM` via `pipewire` (`EasyEffects` is recommend, the initial audio is bad, even on AOSP) |
+| **Wi-Fi / Bluetooth** | WCN6855, using upstream code (WCN6855 firmware is from `liquin` (Xiaomi Pad 6 Pro), `OS3.0.7.0.VMYCNXM` due to stock lenovo firmware require WMM workaround which is very, very ugly to fix (even with LLM assisted, or savior claude fable, and gain is small) |
 | **CPU** | Octa-core (1×3.19 GHz Cortex-X2 + 3×2.75 GHz Cortex-A710 + 4×1.80 GHz Cortex-A510) |
 | **GPU** | Adreno 730 as Freedreno 725 (`0x07030002`). [Reference](https://raw.githubusercontent.com/termux/termux-packages/f8013fe24f/packages/mesa/0016-unofficial_support_adreno_710_720_722.patch) |
 | **Display** | 30/60/120/144 Hz reported correctly. VRR from ~48 Hz up to 144 Hz. 30 Hz is supported in hardware, but Lenovo never set `mdss-dsi-qsync-min-refresh-rate` to 30, so the default floor is currently 48 Hz. [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
-| **microSD** | Tested with SanDisk Ultra (A1) |
-| **Touch** | Novatek NT36523n — upstream + device-specific changes |
+| **microSD** | Tested with SanDisk Ultra (A1) (mount under `/mnt/MicroSD` to avoid name conflict with external drive) |
+| **Touch** | Novatek NT36523n — upstream + device-specific changes, touch gestures is temporary on halt (the tricky part is `game_mode` is conflict with pen mode (palm rejection), so touch gestures kernel is temporary on halt until i finish pen side) |
 | **Fuel gauge** | battery report is now working properly with `power_now` and `µAh unit` implement (lenovo firmware only answer `power_now` with state of charge (measure with Current × Voltage) SC8280XP on lenovo sm8475 use µAh instead of mAh) |
-| **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera and `gc02m1` for NEC (need confirmation)|
-| **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration. usb on y700 (pretty much all generations) have usb port priority, more info on [port priority](/docs/port_priority.md) |
-| **UFS** | Working. Limited to HS-GEAR4 (Rate A) because of the UFS hardware itself |
+| **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera and `gc02m1` for NEC (need confirmation for NEC)|
+| **USB** | Working, including DP-alt, DP-alt audio, and dual-port arbitration. usb on y700 (pretty much all generations) have usb port priority, more info on [port priority](/docs/port_priority.md) + onsemi FSA4480 type c port switch also working|
+| **UFS** | Working. Limited to HS-GEAR4 (Rate A) because of the UFS hardware itself (note: Rate B is possible, but require heavy workaround as ufs voltage drop during cold boot, causing ufs to write random corrupted data) |
 | **Iris (VPU)** | Hardware accelerated on V4L2. VA-API needs [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) |
-| **Haptics** | AW86927 — upstream + small dual-haptics changes. rootfs only shipped 7 SRAM firmwares; other 131 haptics firmware are now working, and optional (you much ship firmware yourself) delay is vary between 1ms <> 5ms mesaure by median latency (4 i2c transfers) |
+| **Haptics** | AW86927 — upstream + small dual-haptics changes. rootfs only shipped 7 SRAM firmwares; other 131 haptics firmware are now working, and optional (you must ship firmware yourself) delay is vary between 1ms <> 5ms mesaure by median latency (4 i2c transfers) |
 | **Sensors** | Auto-brightness, lid-cover suspend, gyroscope. CDSP / SDSP / ADSP working |
-| **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working |
+| **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working (the deep suspend rate isn't reliable due to rootfs keep updating, but last time measure was 0.62% per 3.5 hours) |
 | **Charging** | base charging code is using upstream code, with bypass charging (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
 | **Thermal** | Working. Power profiles included |
 
@@ -51,7 +51,11 @@ Scripts and device support for running **Arch Linux ARM** on the
 | --- | --- |
 | **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR is now supported on hyprland only for now. |
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom |
-| **Stylus** | AP500U / AP501U and Precision Pen 2. which i don’t have (AP501U should arrives monday or tuesday) |
+| **Stylus** | AP500U / AP501U (`Picasso`). which i don’t have (AP501U should arrives monday or tuesday), initial support is already on kernel. |
+| **Modem** | this tablet doesn't have modem, you can't add something that doesn't have on first place. |
+| **GPS** | this tablet doesn't have gps antenna, so don't bring it for hiking or camping, use compass, or your phone. |
+| **NFC** | this tablet doesn't have nfc, so don't touch your card on it |
+| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
 
 ## Technical notes
 | Component | Notes |
