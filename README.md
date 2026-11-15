@@ -55,13 +55,14 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Modem** | this tablet doesn't have modem, you can't add something that doesn't have on first place. |
 | **GPS** | this tablet doesn't have gps antenna, so don't bring it for hiking or camping, use compass, or your phone. |
 | **NFC** | this tablet doesn't have nfc, so don't touch your card on it |
-| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
 
 ## Technical notes
 | Component | Notes |
 | --- | --- |
 | **WIFI** | ath11k have D3cold failure which is unique to lenovo (lmao), so 2s firmware reload after suspend is normal, WoW policy won't works there [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) |
 | **Browser** | Youtube ambient mode breaks zero-copy video path due to YUV have to be convert and copied into an RGBA canvas, (not only that, it break cross-fade, so vrr never works it'll keep force render at 144hz) fixable, but will break many aspects. (2.8w (HDR), 2.71w (SDR) vs 33w (up to 35w with hdr) battery usage with ambient mode enabled)|
+| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
+| **Persist** | healthy persist partition is required for hardware functional on mainline linux **DO NOT** boot this rootfs if your persist is corrupted, or broken, if you're on zui **ALWAYS** backup clean persist, you **CAN'T** borrow it from someone else (sure corrupted persist can still boots, but i won't **guarantee** hardware functionally) |
 
 ## Relock bootloader
 
