@@ -22,7 +22,7 @@ scripts/kernel/build-kernel.sh \
 | `--localversion` | Optional `CONFIG_LOCALVERSION`. Use a new one per experiment so its modules don't overwrite the running kernel's. |
 | `--fragment` | Config fragment merged into `.config` before `olddefconfig`; repeatable. `asphalt.config` is the device fragment; `asphalt-cfi.config` and `asphalt-lto.config` are one-off trials. Values that did not survive are listed in `<artifacts>/fragments/not-applied.txt`. |
 | `--allow-compatible` | The exact root compatible packaging accepts although it differs from the baseline (space-separated). Defaults to the asphalt ROW list, since the baseline predates the tb320fc → asphalt rename. msm-id, board-id and region_country always have to match. |
-| `--firmware-dir` | asphalt-firmware checkout (default: next to linux-asphalt-build). The baseline boot ramdisk carries the firmware the DSPs, GPU zap and audio topology load before the root is mounted, still under the pre-rename names; packaging renames it (`package-boot.py --rename-firmware`) and checks every renamed file is byte-identical to this tree. |
+| `--firmware-dir` | asphalt-firmware checkout (default: next to linux-asphalt-build). The baseline boot ramdisk carries the firmware the DSPs and GPU zap load before the root is mounted, still under the pre-rename names; packaging renames it (`package-boot.py --rename-firmware`) and checks every renamed file is byte-identical to this tree. The audio topology is not renamed: the sound card loads it from the rootfs, after root is mounted (built from `audio/Lenovo-Asphalt.m4` with `audio/build-topology.sh`). |
 | `-j` | Parallel jobs (default: all CPUs). |
 
 `package-boot.py` also takes `--kernel-compression {none,lz4,gz}` (default

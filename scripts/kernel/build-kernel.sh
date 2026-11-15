@@ -17,13 +17,9 @@ DTB_NAME=sm8475-lenovo-asphalt-row
 # compatible differs from it on purpose. package-boot.py accepts exactly this
 # list (msm-id/board-id/region_country stay pinned); --allow-compatible overrides.
 ALLOW_COMPATIBLE="lenovo,asphalt-row lenovo,asphalt qcom,sm8475 qcom,sm8450 qcom,cape-mtp qcom,cape qcom,mtp"
-# The baseline ramdisk's firmware still has the old names, and the DSPs, GPU
-# zap and audio topology load from it before the root is mounted. Renamed in
-# the ramdisk, contents checked against the asphalt-firmware tree.
+
 FIRMWARE_RENAMES=(
     qcom/lenovo/tb320fc=qcom/lenovo/asphalt
-    qcom/sm8450/Lenovo-TB320FC-tplg.bin=qcom/sm8450/Lenovo-Asphalt-tplg.bin
-    qcom/sm8475/Lenovo-TB320FC-tplg.bin=qcom/sm8475/Lenovo-Asphalt-tplg.bin
 )
 FIRMWARE_DIR="$HERE/../../../asphalt-firmware"
 
