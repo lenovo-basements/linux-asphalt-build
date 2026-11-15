@@ -1,0 +1,10 @@
+[Unit]
+Description=Lenovo Legion Y700 USB networking gadget (NCM, ssh over USB-C)
+After=sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/asphalt-usb-gadget start
+ExecStop=/usr/local/bin/asphalt-usb-gadget stop

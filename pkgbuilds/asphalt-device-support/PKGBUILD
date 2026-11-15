@@ -20,6 +20,7 @@ depends=(
   alsa-ucm-conf wireplumber iio-sensor-proxy libssc
   tuned tuned-ppd zram-generator
   bluez bluez-utils iproute2 polkit zstd glib2
+  networkmanager dnsmasq
 )
 optdepends=(
   'feedbackd: keyboard haptics (squeekboard) through the device theme'
@@ -28,6 +29,7 @@ optdepends=(
   'libcamera: cameras (pkgbuilds/libcamera adds the sensor helpers)'
 )
 backup=(etc/libcamera/ipa/simple/ov13b10.yaml
+        etc/NetworkManager/dnsmasq-shared.d/asphalt-usb.conf
         etc/libcamera/ipa/simple/s5k4h7.yaml
         etc/libcamera/ipa/simple/sc202cs.yaml)
 install=asphalt-device-support.install
@@ -75,6 +77,14 @@ enable asphalt-hapticd-control.socket
 enable tuned.service
 enable tuned-ppd.service
 PRESET
+
+  # USB networking gadget (asphalt-usb-gadget, started from udev): NM profile
+  # (NM ignores profiles that aren't 0600) and its dnsmasq options, which NM
+  # only reads from /etc.
+  install -Dm600 -t "$d/usr/lib/NetworkManager/system-connections/" \
+    "$r"/etc/NetworkManager/system-connections/asphalt-usb.nmconnection
+  install -Dm644 -t "$d/etc/NetworkManager/dnsmasq-shared.d/" \
+    "$r"/etc/NetworkManager/dnsmasq-shared.d/asphalt-usb.conf
 
   # udev, polkit
   install -Dm644 -t "$d/usr/lib/udev/rules.d/" "$r"/etc/udev/rules.d/*.rules

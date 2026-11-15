@@ -1,0 +1,62 @@
+#!/bin/bash
+# USB networking gadget (CDC NCM): ssh to the tablet over a USB-C cable.
+#
+#   asphalt-usb-gadget start   build the configfs gadget, bind it to the UDC
+#   asphalt-usb-gadget stop    unbind and remove it
+#
+set -euo pipefail
+
+gadget=/sys/kernel/config/usb_gadget/asphalt
+
+mac_base() { sha256sum /etc/machine-id | sed -E 's/^(..)(..)(..)(..).*/02:\1:\2:\3:\4/'; }
+
+start() {
+    local udc
+    udc="$(ls /sys/class/udc 2>/dev/null | head -n 1)"
+    [[ -n "$udc" ]] || { echo "No UDC: no Type-C port is in device role" >&2; exit 0; }
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+    if [[ ! -d "$gadget" ]]; then
+        local base serial
+        base="$(mac_base)"
+        serial="$(cat /sys/bus/soc/devices/soc0/serial_number 2>/dev/null || echo 0)"
+        mkdir -p "$gadget"
+        echo 0x1d6b > "$gadget/idVendor"     # Linux Foundation
+        echo 0x0104 > "$gadget/idProduct"    # Multifunction Composite Gadget
+        echo 0x0100 > "$gadget/bcdDevice"
+        echo 0x0200 > "$gadget/bcdUSB"
+        mkdir -p "$gadget/strings/0x409"
+        echo "Lenovo" > "$gadget/strings/0x409/manufacturer"
+        echo "Legion Y700 Gen 2 (asphalt)" > "$gadget/strings/0x409/product"
+        echo "$serial" > "$gadget/strings/0x409/serialnumber"
+        mkdir -p "$gadget/functions/ncm.usb0"
+        echo "$base:01" > "$gadget/functions/ncm.usb0/dev_addr"
+        echo "$base:02" > "$gadget/functions/ncm.usb0/host_addr"
+        mkdir -p "$gadget/configs/c.1/strings/0x409"
+        echo "NCM" > "$gadget/configs/c.1/strings/0x409/configuration"
+        echo 250 > "$gadget/configs/c.1/MaxPower"
+        ln -s "$gadget/functions/ncm.usb0" "$gadget/configs/c.1/"
+    fi
+    if [[ -z "$(cat "$gadget/UDC")" ]]; then
+        echo "$udc" > "$gadget/UDC"
+    fi
+    local ifname
+    ifname="$(cat "$gadget/functions/ncm.usb0/ifname")"
+    # NetworkManager normally raises it; if it only "assumes" the device it
+    # doesn't, and a down link never reports carrier.
+    ip link set "$ifname" up 2>/dev/null || true
+    echo "NCM gadget on $udc, interface $ifname"
+}
+
+stop() {
+    [[ -d "$gadget" ]] || exit 0
+    [[ -z "$(cat "$gadget/UDC")" ]] || echo "" > "$gadget/UDC"
+    rm -f "$gadget/configs/c.1/ncm.usb0"
+    rmdir "$gadget/configs/c.1/strings/0x409" "$gadget/configs/c.1" \
+          "$gadget/functions/ncm.usb0" "$gadget/strings/0x409" "$gadget"
+}
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    *) sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
