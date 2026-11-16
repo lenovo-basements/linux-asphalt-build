@@ -1,0 +1,32 @@
+--- a/src/ipa/simple/algorithms/agc.cpp
++++ b/src/ipa/simple/algorithms/agc.cpp
+@@ -57,13 +57,13 @@
+  * This replaces the fixed 10% bang-bang step with a proportional correction
+  * that converges smoothly and avoids overshooting near the target.
+  */
+-static constexpr float kExpProportionalGain = 0.04;
++static constexpr float kExpProportionalGain = 0.12;
+ 
+ /*
+  * Maximum multiplicative step per frame, to bound the correction when the
+  * scene changes dramatically.
+  */
+-static constexpr float kExpMaxStep = 0.15;
++static constexpr float kExpMaxStep = 0.35;
+ 
+ Agc::Agc()
+ {
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -508,8 +508,8 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int st
+ 
+ 		patternSize_.height = 2;
+ 
+-		/* Skip every 3th and 4th line, sample every other 2x2 block */
+-		ySkipMask_ = 0x02;
++		/* Skip more lines on high-res (>= 2000px) sensors so CPU stats stay < 5 ms */
++		ySkipMask_ = inputCfg.size.width >= 2000 ? 0x0e : 0x02;
+ 		xShift_ = 0;
+ 		sumShift_ = 0;
+ 		processFrame_ = &SwStatsCpu::processBayerFrame2;
+

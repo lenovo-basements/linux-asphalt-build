@@ -59,7 +59,12 @@ index 3dceea5..5fc6b3a 100644
 +		{ "sc202cs", {
 +			.unitCellSize = { 1750, 1750 },
 +			.testPatternModes = {},
-+			.sensorDelays = { },
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
 +		} },
  		{ "vd55g1", {
  			.unitCellSize = { 2160, 2160 },

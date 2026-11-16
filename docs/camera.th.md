@@ -78,4 +78,12 @@ algorithms:
   - Agc:
 ```
 
-CCM ก่อน, ยังไม่แพลนจะใช้ LSC, แต่อนาคตไม่แน่ ถ้าไม่ขี้เกียจก่อน
+## Camera config shitfest
+
+- OV13B10 ตั้งแต่แรกไว้ที่ DW9714, แต่พออดหลับอดนอนแล้วดูที่ com.qti.sensormodule.ofilm_ov13b10 ดีๆ, แม่งมันคือ `GT9768` นิหว่า, คือมันมี [upstream](https://lists.openwall.net/linux-kernel/2024/06/12/29) รับอยู่ละ, แต่บอกเลยว่าอันนี้คือฉิบหายข้อแรก. (ไฟล์ com.qti.sensormodule.ofilm_ov13b10 มันเซ็ต init ที่ `0x0c`, ตามด้วย `0x02`,`0x06`,`0x07` ทุกๆค่ามันจะ + ไปอีก `100 µs`)
+
+- libcamera แม่งตั้ง long exposure ไว้แค่ 33.35ms, ผิดกับ ZuiCamera แล้วก็ lineage aperture แม่งตั้งอยู่ที่ 80ms, เพราะงั้นว่าทำไม [แพตช์นี้](https://github.com/lenovo-basements/linux-asphalt-build/blob/main/pkgbuilds/libcamera/0004-softisp-Allow-tuned-long-exposure.patch) ([อิงมาจาก upstream นี้](https://patchwork.libcamera.org/patch/28851/)) ถึงจำเป็น เพราะงั้น exposure จะได้ไม่ถึง 80ms เหมือน stock กับ aperture, เวลาตั้งค่าก็แค่ใส่ `max-exposure-time` ที่ 80ms อย่างน้อยมันก็ได้สีที่ดูดี แต่ก็ยังไม่ดีพอ.
+
+- ฉิบหายข้อต่อมาคือ autofocus, จริงๆมันใช้ไม่ได้ด้วยจนรู้ว่าต้องตั้งเป็น GT9768 เนี่ยแหล่ะ, อย่างน้อยตอนนี้มันก็พอใช้ได้, มันตั้ง focus ราวๆ 460~512 (1920×1080, วัดด้วย snapshot กับ pirewire), [แพตช์นี้](https://github.com/lenovo-basements/linux-asphalt-build/blob/main/pkgbuilds/libcamera/0005-softisp-Add-tuned-contrast-autofocus.patch) สำคัญมาก เพราะ autofocus ต้องใช้, แต่ว่าตอนนี้คือยังล็อค AF บน snapsot ไม่ได้.... มั้ง?
+
+- พวกสีพวกอะไรมันจะดีขึ้นเรื่อยๆ ถ้ามีเวลากับอดนอนมากพอ (ลองถ่ายในห้องมันราวๆ 168/170/166, แต่ถ้าถ่ายในที่แสงน้อยภาพมันจะเหลืองเหมือนเยี่ยว เหลืองแบบ เหลืองจริงๆ)

@@ -1,0 +1,422 @@
+--- a/include/libcamera/internal/software_isp/debayer_params.h
++++ b/include/libcamera/internal/software_isp/debayer_params.h
+@@ -22,6 +22,7 @@
+ 						 0.0, 1.0, 0.0,
+ 						 0.0, 0.0, 1.0 } };
+ 	RGB<float> blackLevel = RGB<float>({ 0.0, 0.0, 0.0 });
++	bool measureFocus = false;
+ 	float gamma = 1.0;
+ 	float contrastExp = 1.0;
+ 	RGB<float> gains = RGB<float>({ 1.0, 1.0, 1.0 });
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -43,6 +43,9 @@
+ 	 * \brief A histogram of luminance values of all the sampled pixels
+ 	 */
+ 	Histogram yHistogram;
++
++	/** \brief Contrast figure of merit from the central green pixels */
++	int32_t focusFoM;
+ };
+ 
+ } /* namespace libcamera */
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -56,7 +56,8 @@
+ 	void setWindow(const Rectangle &window);
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+-	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input);
++	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input,
++			  Size focusSize);
+ 
+ 	void processLine0(uint32_t frame, unsigned int y, const uint8_t *src[], unsigned int statsBufferIndex = 0)
+ 	{
+@@ -103,6 +104,7 @@
+ 	void statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats);
+ 
+ 	void processBayerFrame2(MappedFrameBuffer &in);
++	int32_t measureFocus(const MappedFrameBuffer &in, Size size) const;
+ 
+ 	processFrameFn processFrame_;
+ 
+--- a/include/libcamera/internal/software_isp/software_isp.h
++++ b/include/libcamera/internal/software_isp/software_isp.h
+@@ -54,6 +54,7 @@
+ 	int loadConfiguration([[maybe_unused]] const std::string &filename) { return 0; }
+ 
+ 	bool isValid() const;
++	bool contrastAfEnabled() const { return contrastAf_ && gpuDebayer_; }
+ 
+ 	std::vector<PixelFormat> formats(PixelFormat input);
+ 
+@@ -100,6 +101,8 @@
+ 	DebayerParams debayerParams_;
+ 	DmaBufAllocator dmaHeap_;
+ 	bool ccmEnabled_;
++	bool contrastAf_ = false;
++	bool gpuDebayer_;
+ 
+ 	std::unique_ptr<ipa::soft::IPAProxySoft> ipa_;
+ 	std::deque<FrameBuffer *> queuedInputBuffers_;
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -656,7 +656,10 @@
+ 			inDmaSyncer.emplace(input->planes()[0].fd, DmaSyncer::SyncType::Read);
+ 			inMapped.emplace(input, MappedFrameBuffer::MapFlag::Read);
+ 		}
+-		stats_->processFrame(frame, 0, inMapped.value());
++		const bool focus = params.measureFocus &&
++				   inputPixelFormat_ == formats::SBGGR10_CSI2P;
++		stats_->processFrame(frame, 0, inMapped.value(),
++				     focus ? Size(width_, height_) : Size());
+ 	}
+ 	inDmaSyncer.reset();
+ 
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -10,6 +10,8 @@
+  */
+ 
+ #include "libcamera/internal/software_isp/swstats_cpu.h"
++
++#include <algorithm>
+ 
+ #include <libcamera/base/log.h>
+ 
+@@ -389,6 +391,7 @@
+ 	if (window_.width == 0)
+ 		LOG(SwStatsCpu, Error) << "Calling startFrame() without setWindow()";
+ 
++	sharedStats_->focusFoM = 0;
+ 	for (auto &s : stats_) {
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		s.yHistogram.fill(0);
+@@ -594,15 +597,42 @@
+ 	}
+ }
+ 
++int32_t SwStatsCpu::measureFocus(const MappedFrameBuffer &in, Size size) const
++{
++	/* Compare same-phase green pixels in the central two thirds. */
++	const unsigned int left = (size.width / 6 + 7) & ~7u;
++	const unsigned int top = (size.height / 6 + 7) & ~7u;
++	const unsigned int right = size.width - left;
++	const unsigned int bottom = size.height - top;
++	const uint8_t *data = in.planes()[0].data();
++	uint64_t energy = 0, light = 0;
++	for (unsigned int y = top; y + 4 < bottom; y += 8) {
++		const uint8_t *row = data + y * stride_;
++		const uint8_t *below = row + 4 * stride_;
++		for (unsigned int x = left; x + 4 < right; x += 8) {
++			const unsigned int offset = x * 5 / 4 + 1;
++			const int green = row[offset];
++			const int horizontal = std::max(std::abs(green - row[offset + 5]) - 3, 0);
++			const int vertical = std::max(std::abs(green - below[offset]) - 3, 0);
++			energy += horizontal * horizontal + vertical * vertical;
++			light += green;
++		}
++	}
++
++	return light ? energy * 1024 / light : 0;
++}
++
+ /**
+  * \brief Calculate statistics for a frame in one go
+  * \param[in] frame The frame number
+  * \param[in] bufferId ID of the statistics buffer
+  * \param[in] input The frame to process
++ * \param[in] focusSize Size of the BGGR RAW10 frame for contrast autofocus
+  *
+  * This may only be called after a successful setWindow() call.
+  */
+-void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input)
++void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input,
++			      Size focusSize)
+ {
+ 	if (frame % kStatPerNumFrames) {
+ 		finishFrame(frame, bufferId);
+@@ -612,6 +642,8 @@
+ 	bench_.startFrame();
+ 	startFrame(frame);
+ 	(this->*processFrame_)(input);
++	if (!focusSize.isNull())
++		sharedStats_->focusFoM = measureFocus(input, focusSize);
+ 	finishFrame(frame, bufferId);
+ 	bench_.finishFrame();
+ }
+--- a/src/libcamera/software_isp/software_isp.cpp
++++ b/src/libcamera/software_isp/software_isp.cpp
+@@ -129,6 +129,7 @@
+ 	}
+ 
+ #endif
++	gpuDebayer_ = !!debayer_;
+ 	if (!debayer_)
+ 		debayer_ = std::make_unique<DebayerCpu>(std::move(stats), cm);
+ 
+@@ -163,7 +164,8 @@
+ 			 sensorInfo,
+ 			 sensor->controls(),
+ 			 ipaControls,
+-			 &ccmEnabled_);
++			 &ccmEnabled_,
++			 &contrastAf_);
+ 	if (ret) {
+ 		LOG(SoftwareIsp, Error) << "IPA init failed";
+ 		debayer_.reset();
+--- a/include/libcamera/ipa/soft.mojom
++++ b/include/libcamera/ipa/soft.mojom
+@@ -10,6 +10,7 @@
+ 
+ struct IPAConfigInfo {
+ 	libcamera.IPACameraSensorInfo sensorInfo;
++	bool measureFocus;
+ 	libcamera.ControlInfoMap sensorControls;
+ };
+ 
+@@ -19,7 +20,7 @@
+ 	     libcamera.SharedFD fdParams,
+ 	     libcamera.IPACameraSensorInfo sensorInfo,
+ 	     libcamera.ControlInfoMap sensorControls)
+-		=> (int32 ret, libcamera.ControlInfoMap ipaControls, bool ccmEnabled);
++		=> (int32 ret, libcamera.ControlInfoMap ipaControls, bool ccmEnabled, bool contrastAf);
+ 	start() => (int32 ret);
+ 	stop();
+ 	configure(IPAConfigInfo configInfo)
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <iterator>
+ #include <list>
+ #include <map>
+@@ -28,12 +29,14 @@
+ #include <libcamera/camera.h>
+ #include <libcamera/color_space.h>
+ #include <libcamera/control_ids.h>
++#include <libcamera/formats.h>
+ #include <libcamera/geometry.h>
+ #include <libcamera/pixel_format.h>
+ #include <libcamera/stream.h>
+ 
+ #include "libcamera/internal/camera.h"
+ #include "libcamera/internal/camera_manager.h"
++#include "libcamera/internal/camera_lens.h"
+ #include "libcamera/internal/camera_sensor.h"
+ #include "libcamera/internal/camera_sensor_properties.h"
+ #include "libcamera/internal/converter.h"
+@@ -349,6 +352,20 @@
+ 
+ 	std::unique_ptr<DelayedControls> delayedCtrls_;
+ 	bool controlsVblank_ = false;
++	struct ContrastFocus {
++		bool enabled = false;
++		uint32_t nextFrame = 0;
++		double exposure = 0.0;
++		unsigned int stableSamples = 0;
++		int32_t position = -1;
++		int32_t bestPosition = 0;
++		int32_t bestScore = 0;
++		int32_t upper = 0;
++		int32_t step = 128;
++		int32_t referenceScore = 0;
++		unsigned int changedSamples = 0;
++		bool locked = false;
++	} contrastFocus_;
+ 
+ 	std::vector<std::unique_ptr<FrameBuffer>> conversionBuffers_;
+ 	struct RequestOutputs {
+@@ -373,6 +390,8 @@
+ 	void ispStatsReady(uint32_t frame, uint32_t bufferId);
+ 	void metadataReady(uint32_t frame, const ControlList &metadata);
+ 	void setSensorControls(const ControlList &sensorControls);
++	void updateContrastFocus(uint32_t frame, const ControlList &metadata);
++	bool moveContrastFocus(uint32_t frame, int32_t position);
+ };
+ 
+ class SimpleCameraConfiguration : public CameraConfiguration
+@@ -1039,9 +1058,106 @@
+ 	if (!info)
+ 		return;
+ 
++	updateContrastFocus(frame, metadata);
+ 	info->request->_d()->metadata().merge(metadata);
+ 	info->metadataProcessed = true;
+ 	tryCompleteRequest(info->request);
++}
++
++bool SimpleCameraData::moveContrastFocus(uint32_t frame, int32_t position)
++{
++	if (sensor_->focusLens()->setFocusPosition(position)) {
++		LOG(SimplePipeline, Warning) << "Failed to move focus lens to " << position;
++		contrastFocus_.enabled = false;
++		return false;
++	}
++
++	contrastFocus_.position = position;
++	/* Skip the in-flight frames and allow the actuator to settle. */
++	contrastFocus_.nextFrame = frame + 8;
++	return true;
++}
++
++void SimpleCameraData::updateContrastFocus(uint32_t frame, const ControlList &metadata)
++{
++	auto &af = contrastFocus_;
++	const auto score = metadata.get(controls::FocusFoM);
++	const auto exposure = metadata.get(controls::ExposureTime);
++	const auto gain = metadata.get(controls::AnalogueGain);
++	if (!af.enabled || !score || !exposure || !gain || frame < af.nextFrame)
++		return;
++
++	const double signal = *exposure * static_cast<double>(*gain);
++	const bool stable = af.exposure > 0.0 &&
++			    std::abs(signal - af.exposure) <= af.exposure * 0.03;
++	af.exposure = signal;
++
++	if (af.locked) {
++		if (!stable || *score <= 0) {
++			af.changedSamples = 0;
++			return;
++		}
++		if (!af.referenceScore) {
++			af.referenceScore = *score;
++			return;
++		}
++		if (std::abs(*score - af.referenceScore) < af.referenceScore * 0.25) {
++			af.changedSamples = 0;
++			return;
++		}
++		if (++af.changedSamples < 5)
++			return;
++		af.locked = false;
++		af.position = -1;
++		af.stableSamples = 0;
++	}
++
++	const auto &range = sensor_->focusLens()->controls().at(V4L2_CID_FOCUS_ABSOLUTE);
++	const int32_t min = range.min().get<int32_t>();
++	const int32_t max = range.max().get<int32_t>();
++	if (af.position < 0) {
++		af.stableSamples = stable ? af.stableSamples + 1 : 0;
++		if (af.stableSamples < 3 || *score <= 0)
++			return;
++		af.bestPosition = min;
++		af.bestScore = 0;
++		af.step = 128;
++		af.upper = max;
++		moveContrastFocus(frame, min);
++		return;
++	}
++
++	/* Do not compare positions while automatic exposure is moving. */
++	if (!stable)
++		return;
++
++	LOG(SimplePipeline, Debug) << "Contrast AF position " << af.position
++				   << " score " << *score;
++	if (*score > af.bestScore) {
++		af.bestScore = *score;
++		af.bestPosition = af.position;
++	}
++
++	if (af.position < af.upper) {
++		moveContrastFocus(frame, std::min(af.position + af.step, af.upper));
++		return;
++	}
++
++	if (af.step == 128) {
++		const int32_t coarse = af.bestPosition;
++		af.step = 32;
++		af.upper = std::min(coarse + 128, max);
++		moveContrastFocus(frame, std::max(coarse - 128, min));
++		return;
++	}
++
++	if (moveContrastFocus(frame, af.bestPosition)) {
++		af.locked = true;
++		af.referenceScore = 0;
++		af.changedSamples = 0;
++		LOG(SimplePipeline, Info) << "Contrast AF selected position " << af.bestPosition
++					  << " with score " << af.bestScore;
++	}
+ }
+ 
+ void SimpleCameraData::setSensorControls(const ControlList &sensorControls)
+@@ -1594,6 +1710,7 @@
+ 	data->useConversion_ = config->needConversion();
+ 
+ 	data->rawStream_ = nullptr;
++	data->contrastFocus_ = {};
+ 	for (unsigned int i = 0; i < config->size(); ++i) {
+ 		StreamConfiguration &cfg = config->at(i);
+ 		bool rawStream = isRaw(cfg);
+@@ -1623,6 +1740,10 @@
+ 		if (data->sensor_->sensorInfo(&configInfo.sensorInfo))
+ 			configInfo.sensorInfo = {};
+ 		configInfo.sensorControls = data->sensor_->controls();
++		configInfo.measureFocus = data->swIsp_->contrastAfEnabled() &&
++					  data->sensor_->focusLens() &&
++					  inputCfg.pixelFormat == formats::SBGGR10_CSI2P;
++		data->contrastFocus_.enabled = configInfo.measureFocus;
+ 		return data->swIsp_->configure(inputCfg, outputCfgs, configInfo);
+ 	}
+ }
+@@ -1682,6 +1803,9 @@
+ 
+ 	video->bufferReady.connect(data, &SimpleCameraData::imageBufferReady);
+ 
++	const bool contrastFocus = data->contrastFocus_.enabled;
++	data->contrastFocus_ = {};
++	data->contrastFocus_.enabled = contrastFocus;
+ 	data->delayedCtrls_->reset();
+ 	if (frameStartEmitter) {
+ 		ret = frameStartEmitter->setFrameStartEnabled(true);
+--- a/src/ipa/simple/soft_simple.cpp
++++ b/src/ipa/simple/soft_simple.cpp
+@@ -58,7 +58,7 @@
+ 		 const IPACameraSensorInfo &sensorInfo,
+ 		 const ControlInfoMap &sensorControls,
+ 		 ControlInfoMap *ipaControls,
+-		 bool *ccmEnabled) override;
++		 bool *ccmEnabled, bool *contrastAf) override;
+ 	int configure(const IPAConfigInfo &configInfo) override;
+ 
+ 	int start() override;
+@@ -98,7 +98,7 @@
+ 			const IPACameraSensorInfo &sensorInfo,
+ 			const ControlInfoMap &sensorControls,
+ 			ControlInfoMap *ipaControls,
+-			bool *ccmEnabled)
++			bool *ccmEnabled, bool *contrastAf)
+ {
+ 	camHelper_ = CameraSensorHelperFactoryBase::create(settings.sensorModel);
+ 	if (!camHelper_) {
+@@ -137,6 +137,7 @@
+ 		return ret;
+ 
+ 	*ccmEnabled = context_.ccmEnabled;
++	*contrastAf = (*data)["contrast-autofocus"].get<bool>(false);
+ 
+ 	params_ = nullptr;
+ 	stats_ = nullptr;
+@@ -203,6 +204,7 @@
+ int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
+ {
+ 	sensorInfoMap_ = configInfo.sensorControls;
++	params_->measureFocus = configInfo.measureFocus;
+ 
+ 	const ControlInfo &exposureInfo = sensorInfoMap_.find(V4L2_CID_EXPOSURE)->second;
+ 	const ControlInfo &gainInfo = sensorInfoMap_.find(V4L2_CID_ANALOGUE_GAIN)->second;
+@@ -310,6 +312,8 @@
+ 	ControlList metadata(controls::controls);
+ 	for (const auto &algo : algorithms())
+ 		algo->process(context_, frame, frameContext, stats_, metadata);
++	if (params_->measureFocus && stats_->valid)
++		metadata.set(controls::FocusFoM, stats_->focusFoM);
+ 	metadataReady.emit(frame, metadata);
+ 
+ 	/* Sanity check */

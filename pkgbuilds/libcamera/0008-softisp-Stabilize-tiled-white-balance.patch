@@ -1,0 +1,73 @@
+--- a/src/ipa/simple/algorithms/awb.h
++++ b/src/ipa/simple/algorithms/awb.h
+@@ -36,6 +36,8 @@
+ 
+ private:
+ 	std::optional<std::array<float, 4>> neutralRange_;
++	unsigned int remainingTileHold_ = 0;
++	bool gainsValid_ = false;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -8,6 +8,7 @@
+ #include "awb.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <numeric>
+ #include <vector>
+ #include <stdint.h>
+@@ -53,6 +54,8 @@
+ {
+ 	auto &gains = context.activeState.awb.gains;
+ 	gains = { { 1.0, 1.0, 1.0 } };
++	remainingTileHold_ = 0;
++	gainsValid_ = false;
+ 
+ 	return 0;
+ }
+@@ -147,15 +150,37 @@
+ 	 * Calculate red and blue gains for AWB.
+ 	 * Clamp max gain at 4.0, this also avoids 0 division.
+ 	 */
+-	auto &gains = context.activeState.awb.gains;
+-	gains = { {
++	RGB<float> target{ {
+ 		sum.r() <= sum.g() / 4 ? 4.0f : static_cast<float>(sum.g()) / sum.r(),
+ 		1.0,
+ 		sum.b() <= sum.g() / 4 ? 4.0f : static_cast<float>(sum.g()) / sum.b(),
+ 	} };
+-	if (neutralRange_) {
+-		if (auto candidate = tiledGains(*stats, blackLevel, *neutralRange_))
+-			gains = *candidate;
++	auto &gains = context.activeState.awb.gains;
++	if (!neutralRange_) {
++		gains = target;
++	} else {
++		/*
++		 * Neutral tiles can briefly leave the frame while panning. Keep
++		 * the last gains for three valid statistics updates, then ease
++		 * toward the whole-frame estimate if the loss persists.
++		 */
++		constexpr unsigned int kTileHoldUpdates = 3;
++		constexpr float kUpdateWeight = 0.35f;
++		if (auto candidate = tiledGains(*stats, blackLevel, *neutralRange_)) {
++			target = *candidate;
++			remainingTileHold_ = kTileHoldUpdates;
++		} else if (remainingTileHold_) {
++			--remainingTileHold_;
++			target = gains;
++		}
++
++		if (gainsValid_) {
++			gains.r() = std::lerp(gains.r(), target.r(), kUpdateWeight);
++			gains.b() = std::lerp(gains.b(), target.b(), kUpdateWeight);
++		} else {
++			gains = target;
++			gainsValid_ = true;
++		}
+ 	}
+ 
+ 	RGB<double> rgbGains{ { 1 / gains.r(), 1 / gains.g(), 1 / gains.b() } };

@@ -70,7 +70,12 @@ index 2804315..d564368 100644
 +				 * 4: "Vertical Color Bar Type 4"
 +				 */
 +			},
-+			.sensorDelays = { },
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
 +		} },
  		{ "vd55g1", {
  			.unitCellSize = { 2160, 2160 },

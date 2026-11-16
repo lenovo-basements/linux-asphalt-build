@@ -1,0 +1,56 @@
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -656,9 +656,10 @@
+ 			inDmaSyncer.emplace(input->planes()[0].fd, DmaSyncer::SyncType::Read);
+ 			inMapped.emplace(input, MappedFrameBuffer::MapFlag::Read);
+ 		}
+-		const bool bggr10 = inputPixelFormat_ == formats::SBGGR10_CSI2P;
++		const bool focus = params.measureFocus &&
++				   inputPixelFormat_ == formats::SBGGR10_CSI2P;
+ 		stats_->processFrame(frame, 0, inMapped.value(), Size(width_, height_),
+-				     bggr10 && params.tiledAwb, bggr10 && params.measureFocus);
++				     params.tiledAwb, focus);
+ 	}
+ 	inDmaSyncer.reset();
+ 
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -603,6 +603,9 @@
+ 	constexpr unsigned int tileSize = 128;
+ 	constexpr unsigned int sampleStep = 8;
+ 	constexpr unsigned int clippingThreshold = 251;
++	const bool bggr = stats0_ == &SwStatsCpu::statsBGGR10PLine0;
++	const unsigned int blueOffset = bggr ? 0 : 1;
++	const unsigned int redOffset = 1 - blueOffset;
+ 	const unsigned int columns = (size.width + tileSize - 1) / tileSize;
+ 	const unsigned int rows = (size.height + tileSize - 1) / tileSize;
+ 	if (columns * rows > sharedStats_->awbTiles.size())
+@@ -617,12 +620,14 @@
+ 			for (unsigned int y = ty * tileSize; y < bottom; y += sampleStep) {
+ 				const uint8_t *top = data + y * stride_;
+ 				const uint8_t *next = top + stride_;
++				if (swapLines_)
++					std::swap(top, next);
+ 				for (unsigned int x = tx * tileSize; x < right; x += sampleStep) {
+ 					const unsigned int i = x * 5 / 4;
+-					const unsigned int blue = top[i];
+-					const unsigned int green0 = top[i + 1];
+-					const unsigned int green1 = next[i];
+-					const unsigned int red = next[i + 1];
++					const unsigned int blue = top[i + blueOffset];
++					const unsigned int green0 = top[i + redOffset];
++					const unsigned int green1 = next[i + blueOffset];
++					const unsigned int red = next[i + redOffset];
+ 					if (std::max({ red, green0, green1, blue }) >= clippingThreshold)
+ 						continue;
+ 					tile.red += red;
+@@ -683,7 +688,8 @@
+ 	bench_.startFrame();
+ 	startFrame(frame);
+ 	(this->*processFrame_)(input);
+-	if (tiledAwb)
++	if (tiledAwb && (stats0_ == &SwStatsCpu::statsBGGR10PLine0 ||
++			 stats0_ == &SwStatsCpu::statsGBRG10PLine0))
+ 		processAwbTiles(input, inputSize);
+ 	if (measureFocus)
+ 		sharedStats_->focusFoM = this->measureFocus(input, inputSize);

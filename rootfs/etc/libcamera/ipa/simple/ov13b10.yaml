@@ -2,9 +2,15 @@
 %YAML 1.1
 ---
 version: 1
+contrast-autofocus: true
+# First pass in actuator codes, padded around the measured EEPROM endpoints.
+contrast-autofocus-range: [355, 770]
 algorithms:
   - BlackLevel:
   - Awb:
+      tiled:
+        daylight: [0.493, 0.690]
+        tungsten: [0.889, 0.424]
   - Ccm:
       ccms:
         - ct: 2740
@@ -29,4 +35,5 @@ algorithms:
                   0.0066, -0.5754,  1.5688 ]
   - Adjust:
   - Agc:
+      max-exposure-time: 33333
 ...

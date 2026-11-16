@@ -1,0 +1,189 @@
+--- a/include/libcamera/ipa/soft.mojom
++++ b/include/libcamera/ipa/soft.mojom
+@@ -20,7 +20,7 @@
+ 	     libcamera.SharedFD fdParams,
+ 	     libcamera.IPACameraSensorInfo sensorInfo,
+ 	     libcamera.ControlInfoMap sensorControls)
+-		=> (int32 ret, libcamera.ControlInfoMap ipaControls, bool ccmEnabled, bool contrastAf);
++		=> (int32 ret, libcamera.ControlInfoMap ipaControls, bool ccmEnabled, bool contrastAf, int32 focusStart, int32 focusEnd);
+ 	start() => (int32 ret);
+ 	stop();
+ 	configure(IPAConfigInfo configInfo)
+--- a/src/ipa/simple/soft_simple.cpp
++++ b/src/ipa/simple/soft_simple.cpp
+@@ -58,7 +58,8 @@
+ 		 const IPACameraSensorInfo &sensorInfo,
+ 		 const ControlInfoMap &sensorControls,
+ 		 ControlInfoMap *ipaControls,
+-		 bool *ccmEnabled, bool *contrastAf) override;
++		 bool *ccmEnabled, bool *contrastAf, int32_t *focusStart,
++		 int32_t *focusEnd) override;
+ 	int configure(const IPAConfigInfo &configInfo) override;
+ 
+ 	int start() override;
+@@ -98,7 +99,8 @@
+ 			const IPACameraSensorInfo &sensorInfo,
+ 			const ControlInfoMap &sensorControls,
+ 			ControlInfoMap *ipaControls,
+-			bool *ccmEnabled, bool *contrastAf)
++			bool *ccmEnabled, bool *contrastAf, int32_t *focusStart,
++			int32_t *focusEnd)
+ {
+ 	camHelper_ = CameraSensorHelperFactoryBase::create(settings.sensorModel);
+ 	if (!camHelper_) {
+@@ -138,6 +140,9 @@
+ 
+ 	*ccmEnabled = context_.ccmEnabled;
+ 	*contrastAf = (*data)["contrast-autofocus"].get<bool>(false);
++	const auto &range = (*data)["contrast-autofocus-range"];
++	*focusStart = range[0].get<int32_t>(-1);
++	*focusEnd = range[1].get<int32_t>(-1);
+ 
+ 	params_ = nullptr;
+ 	stats_ = nullptr;
+--- a/include/libcamera/internal/software_isp/software_isp.h
++++ b/include/libcamera/internal/software_isp/software_isp.h
+@@ -14,6 +14,7 @@
+ #include <stdint.h>
+ #include <string>
+ #include <tuple>
++#include <utility>
+ #include <vector>
+ 
+ #include <libcamera/base/class.h>
+@@ -55,6 +56,7 @@
+ 
+ 	bool isValid() const;
+ 	bool contrastAfEnabled() const { return contrastAf_ && gpuDebayer_; }
++	std::pair<int32_t, int32_t> contrastAfRange() const { return contrastAfRange_; }
+ 
+ 	std::vector<PixelFormat> formats(PixelFormat input);
+ 
+@@ -102,6 +104,7 @@
+ 	DmaBufAllocator dmaHeap_;
+ 	bool ccmEnabled_;
+ 	bool contrastAf_ = false;
++	std::pair<int32_t, int32_t> contrastAfRange_{ -1, -1 };
+ 	bool gpuDebayer_;
+ 
+ 	std::unique_ptr<ipa::soft::IPAProxySoft> ipa_;
+--- a/src/libcamera/software_isp/software_isp.cpp
++++ b/src/libcamera/software_isp/software_isp.cpp
+@@ -165,7 +165,8 @@
+ 			 sensor->controls(),
+ 			 ipaControls,
+ 			 &ccmEnabled_,
+-			 &contrastAf_);
++			 &contrastAf_,
++			 &contrastAfRange_.first, &contrastAfRange_.second);
+ 	if (ret) {
+ 		LOG(SoftwareIsp, Error) << "IPA init failed";
+ 		debayer_.reset();
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -9,6 +9,7 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <iterator>
++#include <limits>
+ #include <list>
+ #include <map>
+ #include <memory>
+@@ -360,7 +361,12 @@
+ 		int32_t position = -1;
+ 		int32_t bestPosition = 0;
+ 		int32_t bestScore = 0;
++		int32_t worstScore = 0;
++		int32_t first = 0;
++		int32_t last = 0;
+ 		int32_t upper = 0;
++		bool bounded = false;
++		bool fine = false;
+ 		int32_t step = 128;
+ 		int32_t referenceScore = 0;
+ 		unsigned int changedSamples = 0;
+@@ -392,6 +398,7 @@
+ 	void setSensorControls(const ControlList &sensorControls);
+ 	void updateContrastFocus(uint32_t frame, const ControlList &metadata);
+ 	bool moveContrastFocus(uint32_t frame, int32_t position);
++	void startContrastScan(uint32_t frame, int32_t first, int32_t last, bool bounded);
+ };
+ 
+ class SimpleCameraConfiguration : public CameraConfiguration
+@@ -1078,6 +1085,23 @@
+ 	return true;
+ }
+ 
++void SimpleCameraData::startContrastScan(uint32_t frame, int32_t first,
++					 int32_t last, bool bounded)
++{
++	auto &af = contrastFocus_;
++	af.first = first;
++	af.last = last;
++	af.upper = last;
++	af.bestPosition = first;
++	af.bestScore = 0;
++	af.worstScore = std::numeric_limits<int32_t>::max();
++	af.bounded = bounded;
++	af.fine = false;
++	af.step = bounded ? 96 : 128;
++	LOG(SimplePipeline, Debug) << "Contrast AF scanning " << first << "-" << last;
++	moveContrastFocus(frame, first);
++}
++
+ void SimpleCameraData::updateContrastFocus(uint32_t frame, const ControlList &metadata)
+ {
+ 	auto &af = contrastFocus_;
+@@ -1119,11 +1143,11 @@
+ 		af.stableSamples = stable ? af.stableSamples + 1 : 0;
+ 		if (af.stableSamples < 3 || *score <= 0)
+ 			return;
+-		af.bestPosition = min;
+-		af.bestScore = 0;
+-		af.step = 128;
+-		af.upper = max;
+-		moveContrastFocus(frame, min);
++		const auto [configuredFirst, configuredLast] = swIsp_->contrastAfRange();
++		const int32_t first = std::max(min, configuredFirst);
++		const int32_t last = std::min(max, configuredLast);
++		const bool bounded = first < last && (first > min || last < max);
++		startContrastScan(frame, bounded ? first : min, bounded ? last : max, bounded);
+ 		return;
+ 	}
+ 
+@@ -1133,6 +1157,7 @@
+ 
+ 	LOG(SimplePipeline, Debug) << "Contrast AF position " << af.position
+ 				   << " score " << *score;
++	af.worstScore = std::min(af.worstScore, *score);
+ 	if (*score > af.bestScore) {
+ 		af.bestScore = *score;
+ 		af.bestPosition = af.position;
+@@ -1143,11 +1168,24 @@
+ 		return;
+ 	}
+ 
+-	if (af.step == 128) {
++	if (!af.fine) {
+ 		const int32_t coarse = af.bestPosition;
++		const int32_t radius = af.step;
++		af.fine = true;
+ 		af.step = 32;
+-		af.upper = std::min(coarse + 128, max);
+-		moveContrastFocus(frame, std::max(coarse - 128, min));
++		af.upper = std::min(coarse + radius, af.last);
++		moveContrastFocus(frame, std::max(coarse - radius, af.first));
++		return;
++	}
++
++	const bool boundary =
++		(af.first > min && af.bestPosition - af.first <= af.step) ||
++		(af.last < max && af.last - af.bestPosition <= af.step);
++	const bool weakPeak = !af.bestScore ||
++			      af.bestScore - af.worstScore < af.bestScore / 8;
++	if (af.bounded && (boundary || weakPeak)) {
++		LOG(SimplePipeline, Debug) << "Contrast AF falling back to the full lens range";
++		startContrastScan(frame, min, max, false);
+ 		return;
+ 	}
+ 

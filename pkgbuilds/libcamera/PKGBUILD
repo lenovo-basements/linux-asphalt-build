@@ -1,7 +1,7 @@
 pkgbase=libcamera
 pkgname=(libcamera libcamera-ipa libcamera-tools)
 pkgver=0.7.2
-pkgrel=4.1
+pkgrel=4.7
 pkgdesc="A complex camera support library for Linux, Android, and ChromeOS (asphalt sensor helpers)"
 arch=(aarch64)
 url="https://libcamera.org/"
@@ -17,9 +17,23 @@ source=(
   0001-libipa-camera_sensor_helper-Add-OV13B10-helper-and-s.patch
   0002-libipa-camera_sensor_helper-Add-S5K4H7-helper-and-se.patch
   0003-libipa-camera_sensor_helper-Add-SC202CS-helper-and-s.patch
+  0004-softisp-Allow-tuned-long-exposure.patch
+  0005-softisp-Add-tuned-contrast-autofocus.patch
+  0006-softisp-Try-a-tuned-focus-range-first.patch
+  0007-softisp-Estimate-AWB-from-neutral-tiles.patch
+  0008-softisp-Stabilize-tiled-white-balance.patch
+  0009-softisp-Support-tiled-AWB-for-packed-Bayer-orders.patch
+  0010-softisp-Tune-AE-convergence-and-highres-stats.patch
 )
 sha512sums=('a5656356617a01a7e8feb535380869d38b7c58139c7f99385af355629d3e1927bbd8847f7bec755c753c72f6b065df76de53c15f9af2e5901e83e7a144a2ddcd'
-            SKIP SKIP SKIP)
+            SKIP SKIP SKIP
+            '8824e06276daa97f75beef51801a1bed67f11167bc0472b9405d8d18e329953db89e82095b9bc057c96cee06fa7225075548152a3713579c78434d42ec8c158c'
+            '1e9ded8a74e3d94d1ef091056890b4e9f07e11163229abf8f46c175c6858a950ba647ee74eaf833ad0d26ee1d0fe2c3b69b5dc8cda7abe9ac6f01ac068afe0e5'
+            'f360778d296d3bc916cf0cd1ca214a39551e92824c8e1e5413f77cdb1c5c843f89e63ea2a686e2147c223f9dd457b59908efd1d7944c4a72cac78cc76a0e1334'
+            'b6e6d21ff5f7de3f61d2778ff3a58e0414d77cbcbefc17c7440b1a04a97e886c008c6db42ab00acd0a18f6a0dfebdf7dfef9ce4c455f9db4e3295096ada5d64a'
+            'f662a66b2154f1358b2a9b96b9d468600df939db25f52eb7b3eacb75daaeaff8e5cb7950b2e76789a57da5dd589c5cfb795b77d5f7a07a3671c4c2dfb08f5df5'
+            '50d3f5fdd72e659380fb43adc0286d4c78784f314854b2079e2a8c86df326542e00ffd62f65a8e64393f244a378787cc6c93fec50decff217e8640e22815b543'
+            SKIP)
 
 _pick() {
   local p="$1" f d; shift
@@ -35,7 +49,7 @@ _pick() {
 prepare() {
   cd $pkgbase
   local p
-  for p in "$srcdir"/000*.patch; do
+  for p in "$srcdir"/00[0-9][0-9]-*.patch; do
     echo "Applying ${p##*/}"
     git apply --whitespace=nowarn "$p"
   done

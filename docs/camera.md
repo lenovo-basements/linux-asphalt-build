@@ -79,4 +79,12 @@ algorithms:
   - Agc:
 ```
 
-CCM row, and no LSC implement for now, which will improve in future, if i'm not lazy
+## Camera config shitfest
+
+- OV13B10 was initially set as DW9714, but after spending my sanity on com.qti.sensormodule.ofilm_ov13b10, it's `GT9768`, which luckily, having [upstream](https://lists.openwall.net/linux-kernel/2024/06/12/29) support already. however, that's just one of the shitfest. (stock com.qti.sensormodule.ofilm_ov13b10 init it as `0x0c`, then `0x02`,`0x06`,`0x07` which each of them follow by `100 µs`)
+
+- the 2nd shitfest is libcamera only set long exposure to 33.35ms, where ZuiCamera and lineage aperture set it at roughly fucking 80ms, that's why [this patch](https://github.com/lenovo-basements/linux-asphalt-build/blob/main/pkgbuilds/libcamera/0004-softisp-Allow-tuned-long-exposure.patch) ([upstream reference](https://patchwork.libcamera.org/patch/28851/)) is necessary to get proper 80ms like stock and aperture, using `Agc` to set `max-exposure-time` to 80ms get decent color picture, but not enough to call it done.
+
+- the next shitfest is, autofocus, it actually didn't works at all until i switch to GT9768, now it's (partially) working, with focus scores around 460~512 (1920×1080, using snapshot as pirewire report), [this patch](https://github.com/lenovo-basements/linux-asphalt-build/blob/main/pkgbuilds/libcamera/0005-softisp-Add-tuned-contrast-autofocus.patch) is requirement to get autofocus working, however, with limitations, you can't use touch control to get AF locked on snapshot, yet?
+
+- camera will be slowly improving, the WIP feature is getting white balance correctly report as closes as ZUI (testing inside basement with well light give me around 168/170/166, and piss filter no longer exists, however, this didn't fix the low light and still give you a piss filter)

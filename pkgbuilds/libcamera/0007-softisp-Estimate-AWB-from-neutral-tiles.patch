@@ -1,0 +1,281 @@
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -7,7 +7,9 @@
+ 
+ #include "awb.h"
+ 
++#include <algorithm>
+ #include <numeric>
++#include <vector>
+ #include <stdint.h>
+ 
+ #include <libcamera/base/log.h>
+@@ -22,6 +24,29 @@
+ LOG_DEFINE_CATEGORY(IPASoftAwb)
+ 
+ namespace ipa::soft::algorithms {
++
++int Awb::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
++{
++	const auto &tiled = tuningData["tiled"];
++	if (!tiled.isDictionary())
++		return 0;
++
++	const auto &daylight = tiled["daylight"];
++	const auto &tungsten = tiled["tungsten"];
++	std::array<float, 4> range{ daylight[0].get<float>(0.0f),
++				   daylight[1].get<float>(0.0f),
++				   tungsten[0].get<float>(0.0f),
++				   tungsten[1].get<float>(0.0f) };
++	if (std::any_of(range.begin(), range.end(), [](float value) {
++		    return !(value >= 0.25f && value <= 4.0f);
++	    }) || (range[0] == range[2] && range[1] == range[3])) {
++		LOG(IPASoftAwb, Warning) << "Invalid tiled AWB neutral range";
++		return 0;
++	}
++
++	neutralRange_ = range;
++	return 0;
++}
+ 
+ int Awb::configure(IPAContext &context,
+ 		   [[maybe_unused]] const IPAConfigInfo &configInfo)
+@@ -41,6 +66,51 @@
+ 
+ 	frameContext.gains = gains;
+ 	params->gains = gains;
++	params->tiledAwb = neutralRange_.has_value();
++}
++
++static std::optional<RGB<float>> tiledGains(const SwIspStats &stats, uint8_t blackLevel,
++					   const std::array<float, 4> &neutralRange)
++{
++	const auto &[daylightRed, daylightBlue, tungstenRed, tungstenBlue] = neutralRange;
++	const float redRange = tungstenRed - daylightRed;
++	const float blueRange = tungstenBlue - daylightBlue;
++	const float rangeSquared = redRange * redRange + blueRange * blueRange;
++	constexpr float tolerance = 0.075f;
++
++	std::vector<float> redGains, blueGains;
++	for (unsigned int i = 0; i < stats.awbTileCount; ++i) {
++		const auto &tile = stats.awbTiles[i];
++		const float black = static_cast<float>(blackLevel) * tile.count;
++		const float red = tile.red - black;
++		const float green = tile.green - black;
++		const float blue = tile.blue - black;
++		if (!tile.count || std::min({ red, green, blue }) < 2.0f * tile.count)
++			continue;
++
++		const float rg = red / green - daylightRed;
++		const float bg = blue / green - daylightBlue;
++		const float fraction = std::clamp((rg * redRange + bg * blueRange) /
++						  rangeSquared,
++						  0.0f, 1.0f);
++		const float dr = rg - fraction * redRange;
++		const float db = bg - fraction * blueRange;
++		if (dr * dr + db * db <= tolerance * tolerance) {
++			redGains.push_back(green / red);
++			blueGains.push_back(green / blue);
++		}
++	}
++
++	if (redGains.size() < std::max(8u, stats.awbTileCount / 20))
++		return std::nullopt;
++
++	auto median = [](std::vector<float> &values) {
++		auto mid = values.begin() + values.size() / 2;
++		std::nth_element(values.begin(), mid, values.end());
++		return *mid;
++	};
++	LOG(IPASoftAwb, Debug) << "Using " << redGains.size() << " neutral tiles";
++	return RGB<float>{ { median(redGains), 1.0f, median(blueGains) } };
+ }
+ 
+ void Awb::process(IPAContext &context,
+@@ -83,6 +153,10 @@
+ 		1.0,
+ 		sum.b() <= sum.g() / 4 ? 4.0f : static_cast<float>(sum.g()) / sum.b(),
+ 	} };
++	if (neutralRange_) {
++		if (auto candidate = tiledGains(*stats, blackLevel, *neutralRange_))
++			gains = *candidate;
++	}
+ 
+ 	RGB<double> rgbGains{ { 1 / gains.r(), 1 / gains.g(), 1 / gains.b() } };
+ 	context.activeState.awb.temperatureK = estimateCCT(rgbGains);
+--- a/src/ipa/simple/algorithms/awb.h
++++ b/src/ipa/simple/algorithms/awb.h
+@@ -6,6 +6,9 @@
+  */
+ 
+ #pragma once
++
++#include <array>
++#include <optional>
+ 
+ #include "algorithm.h"
+ 
+@@ -19,6 +22,7 @@
+ 	Awb() = default;
+ 	~Awb() = default;
+ 
++	int init(IPAContext &context, const ValueNode &tuningData) override;
+ 	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
+ 	void prepare(IPAContext &context,
+ 		     const uint32_t frame,
+@@ -29,6 +33,9 @@
+ 		     IPAFrameContext &frameContext,
+ 		     const SwIspStats *stats,
+ 		     ControlList &metadata) override;
++
++private:
++	std::optional<std::array<float, 4>> neutralRange_;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+--- a/include/libcamera/internal/software_isp/debayer_params.h
++++ b/include/libcamera/internal/software_isp/debayer_params.h
+@@ -23,6 +23,7 @@
+ 						 0.0, 0.0, 1.0 } };
+ 	RGB<float> blackLevel = RGB<float>({ 0.0, 0.0, 0.0 });
+ 	bool measureFocus = false;
++	bool tiledAwb = false;
+ 	float gamma = 1.0;
+ 	float contrastExp = 1.0;
+ 	RGB<float> gains = RGB<float>({ 1.0, 1.0, 1.0 });
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -46,6 +46,13 @@
+ 
+ 	/** \brief Contrast figure of merit from the central green pixels */
+ 	int32_t focusFoM;
++
++	/* BGGR samples grouped into 128x128 tiles, excluding clipped pixels. */
++	struct AwbTile {
++		uint32_t red, green, blue, count;
++	};
++	std::array<AwbTile, 1024> awbTiles;
++	unsigned int awbTileCount;
+ };
+ 
+ } /* namespace libcamera */
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -57,7 +57,7 @@
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input,
+-			  Size focusSize);
++			  Size inputSize, bool tiledAwb, bool measureFocus);
+ 
+ 	void processLine0(uint32_t frame, unsigned int y, const uint8_t *src[], unsigned int statsBufferIndex = 0)
+ 	{
+@@ -104,6 +104,7 @@
+ 	void statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats);
+ 
+ 	void processBayerFrame2(MappedFrameBuffer &in);
++	void processAwbTiles(const MappedFrameBuffer &in, Size size);
+ 	int32_t measureFocus(const MappedFrameBuffer &in, Size size) const;
+ 
+ 	processFrameFn processFrame_;
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -656,10 +656,9 @@
+ 			inDmaSyncer.emplace(input->planes()[0].fd, DmaSyncer::SyncType::Read);
+ 			inMapped.emplace(input, MappedFrameBuffer::MapFlag::Read);
+ 		}
+-		const bool focus = params.measureFocus &&
+-				   inputPixelFormat_ == formats::SBGGR10_CSI2P;
+-		stats_->processFrame(frame, 0, inMapped.value(),
+-				     focus ? Size(width_, height_) : Size());
++		const bool bggr10 = inputPixelFormat_ == formats::SBGGR10_CSI2P;
++		stats_->processFrame(frame, 0, inMapped.value(), Size(width_, height_),
++				     bggr10 && params.tiledAwb, bggr10 && params.measureFocus);
+ 	}
+ 	inDmaSyncer.reset();
+ 
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -392,6 +392,7 @@
+ 		LOG(SwStatsCpu, Error) << "Calling startFrame() without setWindow()";
+ 
+ 	sharedStats_->focusFoM = 0;
++	sharedStats_->awbTileCount = 0;
+ 	for (auto &s : stats_) {
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		s.yHistogram.fill(0);
+@@ -597,6 +598,44 @@
+ 	}
+ }
+ 
++void SwStatsCpu::processAwbTiles(const MappedFrameBuffer &in, Size size)
++{
++	constexpr unsigned int tileSize = 128;
++	constexpr unsigned int sampleStep = 8;
++	constexpr unsigned int clippingThreshold = 251;
++	const unsigned int columns = (size.width + tileSize - 1) / tileSize;
++	const unsigned int rows = (size.height + tileSize - 1) / tileSize;
++	if (columns * rows > sharedStats_->awbTiles.size())
++		return;
++
++	const uint8_t *data = in.planes()[0].data();
++	for (unsigned int ty = 0; ty < rows; ++ty) {
++		for (unsigned int tx = 0; tx < columns; ++tx) {
++			SwIspStats::AwbTile tile{};
++			const unsigned int bottom = std::min(size.height - 1, (ty + 1) * tileSize);
++			const unsigned int right = std::min(size.width - 1, (tx + 1) * tileSize);
++			for (unsigned int y = ty * tileSize; y < bottom; y += sampleStep) {
++				const uint8_t *top = data + y * stride_;
++				const uint8_t *next = top + stride_;
++				for (unsigned int x = tx * tileSize; x < right; x += sampleStep) {
++					const unsigned int i = x * 5 / 4;
++					const unsigned int blue = top[i];
++					const unsigned int green0 = top[i + 1];
++					const unsigned int green1 = next[i];
++					const unsigned int red = next[i + 1];
++					if (std::max({ red, green0, green1, blue }) >= clippingThreshold)
++						continue;
++					tile.red += red;
++					tile.green += (green0 + green1) / 2;
++					tile.blue += blue;
++					++tile.count;
++				}
++			}
++			sharedStats_->awbTiles[sharedStats_->awbTileCount++] = tile;
++		}
++	}
++}
++
+ int32_t SwStatsCpu::measureFocus(const MappedFrameBuffer &in, Size size) const
+ {
+ 	/* Compare same-phase green pixels in the central two thirds. */
+@@ -627,12 +666,14 @@
+  * \param[in] frame The frame number
+  * \param[in] bufferId ID of the statistics buffer
+  * \param[in] input The frame to process
+- * \param[in] focusSize Size of the BGGR RAW10 frame for contrast autofocus
++ * \param[in] inputSize Size of the BGGR RAW10 frame
++ * \param[in] tiledAwb Enable tiled white balance statistics
++ * \param[in] measureFocus Enable contrast autofocus statistics
+  *
+  * This may only be called after a successful setWindow() call.
+  */
+ void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input,
+-			      Size focusSize)
++			      Size inputSize, bool tiledAwb, bool measureFocus)
+ {
+ 	if (frame % kStatPerNumFrames) {
+ 		finishFrame(frame, bufferId);
+@@ -642,8 +683,10 @@
+ 	bench_.startFrame();
+ 	startFrame(frame);
+ 	(this->*processFrame_)(input);
+-	if (!focusSize.isNull())
+-		sharedStats_->focusFoM = measureFocus(input, focusSize);
++	if (tiledAwb)
++		processAwbTiles(input, inputSize);
++	if (measureFocus)
++		sharedStats_->focusFoM = this->measureFocus(input, inputSize);
+ 	finishFrame(frame, bufferId);
+ 	bench_.finishFrame();
+ }
