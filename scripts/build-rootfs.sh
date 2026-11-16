@@ -289,6 +289,7 @@ echo "root:root" | "${CHROOT[@]}" "$TARGET_ROOT" chpasswd
 printf 'MICROSD_USER=%s\n' "$USERNAME" > "${TARGET_ROOT}/etc/asphalt-microsd.conf"
 
 echo "=== [5/8] Configuring services, desktop & login ==="
+
 # Every image needs these, whatever the desktop. The PMIC RTC can't be set
 # from Linux (it reads 1970), so without NTP the clock only has systemd's
 # saved timestamp from the last shutdown.

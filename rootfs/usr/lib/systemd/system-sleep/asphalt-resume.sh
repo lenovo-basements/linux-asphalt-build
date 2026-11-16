@@ -34,7 +34,6 @@ if [ "$1" = "post" ]; then
     systemctl --no-block restart asphalt-resume-display.service
 
     # Rotation and the light proxy are restored by asphalt-suspend-sensors.service
-    # after user.slice thaws, preserving services that were manually stopped.
 
     # Preserve each resume's IRQ in the journal before a later wake replaces it.
     WAKE_IRQ=$(cat /sys/power/pm_wakeup_irq 2>/dev/null) || WAKE_IRQ=unknown

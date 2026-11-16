@@ -1,8 +1,6 @@
 # Hall events travel through SLPI; allow its interrupt to wake the AP.
 SUBSYSTEM=="platform", KERNEL=="smp2p-slpi", TEST=="power/wakeup", ATTR{power/wakeup}="enabled"
 
-# Prevent unwanted wakeup sources from interrupting deep suspend
-
 # Disable wakeup on battery and power supply monitoring (qcom-battmgr polls every ~13s)
 SUBSYSTEM=="power_supply", ATTR{power/wakeup}=="enabled", ATTR{power/wakeup}="disabled"
 

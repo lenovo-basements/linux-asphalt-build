@@ -26,7 +26,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 - [Kernel source](https://github.com/lenovo-basements/lenovo-sm8475-mainline)
 - [Firmware repo](https://github.com/lenovo-basements/asphalt-firmware)
 - [What’s working](#whats-working)
-- [Building (kernel + packaging)](scripts/kernel/README.md)
+- [Build instructions](scripts/README.md)
 - [Relock bootloader](#relock-bootloader)
 - <a href="/docs/camera.md">the rant: camera</a>
 
@@ -56,7 +56,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 
 | Component | Notes |
 | --- | --- |
-| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR is now supported on hyprland only for now. |
+| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR is now supported (require dummy EDID for each WMs) |
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom |
 | **Stylus** | AP500U / AP501U (`Picasso`). which i don’t have (AP501U should arrives monday or tuesday), initial support is already on kernel. |
 | **Modem** | this tablet doesn't have modem, you can't add something that doesn't have on first place. |
@@ -66,10 +66,10 @@ Scripts and device support for running **Arch Linux ARM** on the
 ## Technical notes
 | Component | Notes |
 | --- | --- |
-| **WIFI** | ath11k have D3cold failure which is unique to lenovo (lmao), so 2s firmware reload after suspend is normal, WoW policy won't works there [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) |
+| **WIFI** | ath11k have D3cold failure which is unique to lenovo (lmao), so 2s firmware reload after suspend is normal (don't worry, it's automatic), WoW policy won't works there [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) |
 | **Browser** | Youtube ambient mode breaks zero-copy video path due to YUV have to be convert and copied into an RGBA canvas, (not only that, it break cross-fade, so vrr never works it'll keep force render at 144hz) fixable, but will break many aspects. (2.8w (HDR), 2.71w (SDR) vs 33w (up to 35w with hdr) battery usage with ambient mode enabled)|
 | **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
-| **Persist** | healthy persist partition is required for hardware functional on mainline linux **DO NOT** boot this rootfs if your persist is corrupted, or broken, if you're on zui **ALWAYS** backup clean persist, you **CAN'T** borrow it from someone else (sure corrupted persist can still boots, but i won't **guarantee** hardware functionally) |
+| **Persist** | healthy persist partition is required for hardware functional on mainline linux, **DO NOT** boot this rootfs if your persist is corrupted, or broken, if you're on zui **ALWAYS** backup clean persist, you **CAN'T** borrow it from someone else (sure corrupted persist can still boots, but i won't **guarantee** hardware functionally) |
 
 ## Relock bootloader
 

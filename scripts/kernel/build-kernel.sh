@@ -13,8 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="" OUT="" ART="" BASELINE="" LOCALVERSION="" JOBS=""
 FRAGMENTS=()
 DTB_NAME=sm8475-lenovo-asphalt-row
-# The packaging baseline predates the tb320fc -> asphalt rename, so the root
-# compatible differs from it on purpose. package-boot.py accepts exactly this
+# root compatible differs from it on purpose. package-boot.py accepts exactly this
 # list (msm-id/board-id/region_country stay pinned); --allow-compatible overrides.
 ALLOW_COMPATIBLE="lenovo,asphalt-row lenovo,asphalt qcom,sm8475 qcom,sm8450 qcom,cape-mtp qcom,cape qcom,mtp"
 
