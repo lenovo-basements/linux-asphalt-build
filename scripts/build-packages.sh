@@ -12,16 +12,15 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIRMWARE_DIR="${ASPHALT_FIRMWARE_DIR:-$REPO_DIR/../asphalt-firmware}"
-PEN_DIR="${ASPHALT_PEN_DIR:-$REPO_DIR/../asphalt-pen-service}"
 BUILD_USER="${BUILD_USER:-asphalt-build}"
 WORK="${WORK:-/var/tmp/asphalt-pkgbuild}"
 OUT="$REPO_DIR/pkgbuilds/out"
 KERNEL_BUILD=""
 
 ORDER=(qrtr pd-mapper hexagonrpc sensh qcom-va-driver hyprgrass libcamera
-       asphalt-firmware asphalt-pen-service asphalt-device-support linux-asphalt)
+       asphalt-firmware asphalt-device-support linux-asphalt)
 # Packaged straight from local checkouts; nothing to resolve at build time.
-NODEPS=(asphalt-firmware asphalt-pen-service asphalt-device-support linux-asphalt)
+NODEPS=(asphalt-firmware asphalt-device-support linux-asphalt)
 # Needed by later builds: install as soon as they're built.
 INSTALL_AFTER=(qrtr)
 
@@ -64,7 +63,7 @@ for pkg in "${ORDER[@]}"; do
     (cd "$WORK/$pkg" && sudo -u "$BUILD_USER" \
         GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
         ASPHALT_BUILD_DIR="$REPO_DIR" ASPHALT_FIRMWARE_DIR="$FIRMWARE_DIR" \
-        ASPHALT_PEN_DIR="$PEN_DIR" ASPHALT_KERNEL_BUILD="$KERNEL_BUILD" \
+        ASPHALT_KERNEL_BUILD="$KERNEL_BUILD" \
         PKGDEST="$WORK/$pkg" makepkg "${flags[@]}")
     built=("$WORK/$pkg"/*.pkg.tar.*)
     for f in "${built[@]}"; do

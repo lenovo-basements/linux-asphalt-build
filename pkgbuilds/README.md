@@ -10,7 +10,6 @@ system `pacman -U out/*.pkg.tar.*` updates them.
 | `asphalt-device-support` | daemons, units, udev, UCM, WirePlumber, tuned, haptics, sensors glue (`../rootfs`) | this repo |
 | `asphalt-firmware` | device firmware + SSC sensor configs | `../../asphalt-firmware` |
 | `linux-asphalt` | modules (+ Image, DTBs, boot images for reference) of one kernel build | a `build-kernel.sh` output dir |
-| `asphalt-pen-service` | pen mode while a BT pen is connected | `../../asphalt-pen-service` |
 | `qrtr`, `pd-mapper` | QRTR library/tools, protection-domain mapper | upstream, pinned |
 | `hexagonrpc` | FastRPC server for the sensor DSP (+ local changes) | upstream + patch |
 | `sensh` | SSC sensor shell + `sscregistrygen` (+ local changes) | upstream + patches |
