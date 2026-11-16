@@ -50,7 +50,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Sensors** | Auto-brightness, lid-cover suspend, gyroscope. CDSP / SDSP / ADSP working |
 | **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working (the deep suspend rate isn't reliable due to rootfs keep updating, but last time measure was 0.62% per 3.5 hours) |
 | **Charging** | base charging code is using upstream code, with bypass charging (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
-| **Thermal** | Working. Power profiles included |
+| **Thermal** | Working. Power profiles included, 8 ADC thermistor are now implemented (`pmk8350_die_temp`, `pm8350_die_temp`, `pm8350_msm_therm`, `pm8350_cam_flash_therm`, `pm8350_hot_pocket_therm`, `pm8350_wide_rfc_therm`, `pm8350_chg_therm2`, `pm8350_usb1_conn_ts_ntc`,) temperature report is more or less accurated compare to zui (for example: `pm8350_chg_therm2` on mainline is 38.3 °C vs 37.8 °C on stock. many factor affect the report, so take it with gain of salt) |
 
 ## What doesn’t work / TO-DO
 
