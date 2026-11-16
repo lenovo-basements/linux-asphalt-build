@@ -1,5 +1,12 @@
 # Rootfs build script for lenovo y700 gen 2
 
+<p align="center">
+  <img width="1051" height="657" alt="image" src="https://github.com/user-attachments/assets/6bbcf9a0-ddd8-4c07-b14d-f9828ae97f9e" />
+  <img width="1051" height="657" alt="image" src="https://github.com/user-attachments/assets/d335d65b-66d6-4138-8bd4-7c8437d3622a" />
+</p>
+
+<p align="center"> <a href="https://www.pixiv.net/en/artworks/151930453">wallpaper</a></p>
+
 <p align="center"><a href="/README.md">English</a> | ภาษาไทย</p>
 
 ---
