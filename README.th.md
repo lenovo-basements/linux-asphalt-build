@@ -39,7 +39,7 @@
 | **CPU** | Octa-core (1×3.19 GHz Cortex-X2 + 3×2.75 GHz Cortex-A710 + 4×1.80 GHz Cortex-A510) |
 | **GPU** | Adreno 730 แต่ Freedreno โชว์เป็น FD725 (`0x07030002`) แทน. [Reference](https://raw.githubusercontent.com/termux/termux-packages/f8013fe24f/packages/mesa/0016-unofficial_support_adreno_710_720_722.patch) |
 | **จอภาพ** | 30/60/120/144 Hz ใช้ได้หมดนะ. VRR ก็ได้ตั้งแต่ ~48 Hz ลากยาวถึง 144 Hz. จริงๆ 30 Hz มันรับนะ แต่ Lenovo ไม่ได้ตั้ง `mdss-dsi-qsync-min-refresh-rate` ไว้ มันเลยได้แค่ 48hz นั่นแหล่ะ [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
-| **microSD** | ความเร็วไม่ได้แย่นะ ลองกับ SanDisk Ultra (A1) มันก็พอได้อยู่อะ (mount ในชื่อ MicroSD เพราะกันปัญหาชื่อซํ้า) |
+| **microSD** | ความเร็วไม่ได้แย่นะ ลองกับ SanDisk Ultra (A1) มันก็พอได้อยู่อะ (mount ในชื่อ `microSD` เพราะกันปัญหาชื่อซํ้า) ส่วนความเร็วก็แล้วแต่ machine god จะประทานพร |
 | **ทัชสกรีน** | Novatek NT36523n — upstream + โค้ดฝั่ง lenovo นิดหน่อย สำหรับสไตลัส พวกลูกเล่นตอนนี้ยังไม่ได้ใส่มา รอปากกามาถึงบ้านก่อน มันมี node ที่เรียกว่า game_mode มันมีปัญหากับกันข้อมืออยู่ เลยต้องเบรคก่อน |
 | **Fuel gauge** | ตอนนี้รีพอร์ตถูกต้อง 100% (เฟิร์มแวร์ lenovo แม่งรีพอร์ต `power_now` เป็น state of charge, วัดจาก Current × Voltage) ของแถมคือ SC8280XP แม่งก็รีพอร์ตเป็น µAh แทนที่จะเป็น mAh |
 | **กล้อง** | ROW กับ PRC ใช้กล้องคนละชุดกัน อันนี้ของ ROW (`ov13b10`, `s5k4h7`, `sc202cs`) ถ้าใช้ NEC (เครื่องญี่ปุ่น)... โชคดี bro (เพราะใช้ `gc02m1` เป็น marco) ถ้าใช้เครื่อง PRC ก็โชคดีเช่นกัน กล้องแม่งคนละตัวเลย (`hi1339` ในเลนส์หลัก), flash ใช้ได้แล้วจา (`pm8350c_flash`)|
@@ -48,6 +48,7 @@
 | **Iris (VPU)** | ผ่าน V4L2. ถ้าจะใช้ VA-API (มึงใช้ brave) ต้องใช้ [qcom-va-driver](https://github.com/radxa-pkg/qcom-va-driver) แทน |
 | **มอเตอร์สั่น** | AW86927 — ใช้ upstream + โค้ดจาก lenovo นิดหน่อย ไม่ง้ันมันไม่ออกสองฝั่ง, ที่ใส่ให้มี 7 ตัว, อีก 131 ที่เหลือเป็นของแถม (วัดดีเลย์อยู่ประมาณ 1 - 5ms, ใช้ค่ามัธยฐานของเวลาหน่วงเป็นตัววัด)|
 | **เซ็นเซอร์** | ปรับแสงอัตโนมัติ, เอาเคสปิดให้หลับ, ไจโร. CDSP / SDSP / ADSP เวิร์คหมด |
+| **Sensors** | มีแค่ปรับแสงอัตโนมัติ (`STK3A5x-Ambient`), กับฮอลล์เซ็นเซอร์ (`BU52053NVX`) ทื่ใส่มา, Proximity (`STK3A5x`) กับ Magnetometer (`QMC630x`) ไม่ได้ใส่มา เพราะไม่รู้จะใส่มาทำไม* (อย่าง, `net.hadess.SensorProxy` ก็ใช้แค่ accelerometer, ambient Light, กับ proximity), ส่วน CDSP / SDSP / ADSP พวกนี้เวิร์คหมด. *แต่ถ้ามีใครต้องใช้ก็บอก ยินดีจะใส่มาให้ แต่ตอนนี้หาเหตุผลไม่ได้จริงๆ :P |
 | **Suspend** | ได้หมดทั้งปล่อยให้หลับเอง กับใช้ปุ่มให้มันหลับ. s2idle / deep อยากได้แบบไหนไปเลือกเอาเอง (เรื่องกินแบตกะไม่ได้ มันแก้บัคแก้อะไรตลอดเลยประเมินไม่ได้เหมือนกัน) |
 | **ระบบชาร์จ** | Bypass charging ใช้ได้ แต่ไม่ 100% เท่ารอมศูนย์ (`pmic-glink` พอร์ตจาก SM8550, กับใช้โค้ด Lenovo จากเคอร์เนล NEC) |
 | **ระบบความร้อน** | ใช้ได้ เล่นเกมได้อยู่ มี power profiles แถมไปให้, ADC thermistor มี 8 ตัว ใส่มาให้แล้วเอาไว้เช็คความร้อนต่อจุด (`pmk8350_die_temp`, `pm8350_die_temp`, `pm8350_msm_therm`, `pm8350_cam_flash_therm`, `pm8350_hot_pocket_therm`, `pm8350_wide_rfc_therm`, `pm8350_chg_therm2`, `pm8350_usb1_conn_ts_ntc`,) ถามว่าแม่นมั้ย มันก็พอวัดเบื้องต้นได้อะ (อย่าง `pm8350_chg_therm2` ใน mainline มัน 38.3 °C ต่างจาก zui ที่บอกราวๆ 37.8 °C เพราะงั้นไว้เช็คเบื้องต้นดีกว่า) |
