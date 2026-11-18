@@ -1,0 +1,21 @@
+# Opt-in: switch the A/B boot slot from Linux, as `fastboot --set-active`
+# build-packages.sh builds it only when named and leaves it in out/opt-in/.
+
+pkgname=asphalt-slot
+pkgver=4
+pkgrel=1
+pkgdesc="Switch the Lenovo Legion Y700 Gen 2 (asphalt) A/B boot slot from Linux"
+arch=(any)
+license=(GPL-2.0-or-later)
+depends=(python polkit)
+source=(asphalt-slot local.lenovo.asphalt.slot.policy 49-asphalt-slot.rules
+        asphalt-slot-mark-successful.service)
+sha256sums=(SKIP SKIP SKIP SKIP)
+
+package() {
+  install -Dm755 asphalt-slot -t "$pkgdir/usr/bin/"
+  install -Dm644 local.lenovo.asphalt.slot.policy -t "$pkgdir/usr/share/polkit-1/actions/"
+  install -Dm644 49-asphalt-slot.rules -t "$pkgdir/usr/share/polkit-1/rules.d/"
+  # Not enabled on install: systemctl enable asphalt-slot-mark-successful
+  install -Dm644 asphalt-slot-mark-successful.service -t "$pkgdir/usr/lib/systemd/system/"
+}

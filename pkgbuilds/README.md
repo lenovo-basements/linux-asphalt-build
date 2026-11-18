@@ -16,6 +16,7 @@ system `pacman -U out/*.pkg.tar.*` updates them.
 | `qcom-va-driver` | VA-API on Iris (Brave, mpv) | radxa-pkg, pinned |
 | `hyprgrass` | Hyprland touch gestures, pinned for the dotfiles | upstream + wf-touch submodule |
 | `libcamera` | Arch's libcamera + sensor helpers (below) | Arch PKGBUILD + patches |
+| `asphalt-slot` | **opt-in**: switch the A/B slot from Linux (power menu "To Android") | this repo |
 
 Build them all on aarch64 Arch Linux ARM (the tablet, or a clean ALARM chroot) as root:
 
@@ -25,6 +26,13 @@ sudo scripts/build-packages.sh sensh hexagonrpc                         # just t
 ```
 
 Notes:
+- **`asphalt-slot` is opt-in**: never built by default or installed into the image. Build it by
+  name (`build-packages.sh asphalt-slot`), then `pacman -U out/opt-in/asphalt-slot-*`. It makes
+  the same GPT edits as `fastboot --set-active`, however, this tool come with risks,
+  as it only tested on ZUI 17.0.373, so if you're unsure or didn't want to take the risk **DO NOT** use it
+  see [Readme](./asphalt-slot/README.md) for more information
+  `systemctl enable asphalt-slot-mark-successful` marks each good boot successful, so ABL
+  stops counting down retries on the Linux slot.
 - **Services aren't enabled on install** (Arch convention). The image enables the set in
   `/usr/lib/systemd/system-preset/80-asphalt.preset`; on an existing system run the
   `systemctl preset ...` line the package prints.

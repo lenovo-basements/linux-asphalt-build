@@ -5,8 +5,9 @@
 #
 #   sudo scripts/build-packages.sh [--kernel <build-kernel.sh output dir>] [pkg ...]
 #
-# Without package names it builds all of them. linux-asphalt is only built
-# with --kernel. Built packages that others need at build time (qrtr) are
+# Without package names it builds all of them except the opt-in ones (OPTIN),
+# which are built only when named and land in pkgbuilds/out/opt-in/, out of
+# build-rootfs.sh's reach. linux-asphalt is only built with --kernel. Built packages that others need at build time (qrtr) are
 # installed into this system as they come out.
 set -euo pipefail
 
@@ -18,7 +19,9 @@ OUT="$REPO_DIR/pkgbuilds/out"
 KERNEL_BUILD=""
 
 ORDER=(qrtr pd-mapper hexagonrpc sensh qcom-va-driver hyprgrass libcamera
-       asphalt-firmware asphalt-device-support linux-asphalt)
+       asphalt-firmware asphalt-device-support linux-asphalt asphalt-slot)
+# Never in the image or a default build: install by hand from out/opt-in/.
+OPTIN=(asphalt-slot)
 # Packaged straight from local checkouts; nothing to resolve at build time.
 NODEPS=(asphalt-firmware asphalt-device-support linux-asphalt)
 # Needed by later builds: install as soon as they're built.
@@ -33,8 +36,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 if [[ ${#pkgs[@]} -eq 0 ]]; then
-    pkgs=("${ORDER[@]}")
-    [[ -n $KERNEL_BUILD ]] || pkgs=("${pkgs[@]/linux-asphalt}")
+    for pkg in "${ORDER[@]}"; do
+        [[ $pkg == linux-asphalt && -z $KERNEL_BUILD ]] && continue
+        [[ " ${OPTIN[*]} " == *" $pkg "* ]] && continue
+        pkgs+=("$pkg")
+    done
 fi
 [[ $(id -u) -eq 0 ]] || { echo "Run as root (makepkg itself runs as $BUILD_USER)." >&2; exit 1; }
 [[ $(uname -m) == aarch64 ]] || { echo "Build on aarch64 Arch Linux ARM." >&2; exit 1; }
@@ -72,13 +78,16 @@ for pkg in "${ORDER[@]}"; do
         esac
     done
     in_list "$pkg" "${INSTALL_AFTER[@]}" && pacman -U --noconfirm "${built[@]}"
+    dest="$OUT"
+    in_list "$pkg" "${OPTIN[@]}" && dest="$OUT/opt-in"
+    mkdir -p "$dest"
     # Drop older builds of the same packages, keep the new ones.
     for f in "${built[@]}"; do
         name=$(pacman -Qqp "$f")
-        for old in "$OUT"/*.pkg.tar.*; do
+        for old in "$dest"/*.pkg.tar.*; do
             [[ -e $old ]] && [[ $(pacman -Qqp "$old" 2>/dev/null) == "$name" ]] && rm -f "$old"
         done
     done
-    cp "${built[@]}" "$OUT/"
+    cp "${built[@]}" "$dest/"
 done
-ls -la "$OUT"
+ls -la "$OUT" "$OUT/opt-in" 2>/dev/null || true

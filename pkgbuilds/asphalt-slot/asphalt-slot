@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""Show or switch the Qualcomm A/B boot slot from Linux.
+
+This does what Lenovo's ABL `fastboot --set-active` does, and nothing more:
+  - every _a/_b partition pair on the same UFS LUN swaps its type GUIDs (XBL
+    and the other boot firmware find the active copy that way, so a partial
+    swap would boot a mix of the two slots' firmware);
+  - every target-slot partition gets A/B flags 0x3f (priority 3, active,
+    retry 7; successful and unbootable cleared), the other slot only loses
+    its active bit: the values fastboot leaves behind;
+  - the UFS boot LUN (bBootLunEn), which picks xbl/xbl_config, follows the
+    slot: 1 for a, 2 for b. ABL drops to fastboot when slot a firmware meets
+    LUN B. Only 1 or 2 is ever written (0 would disable UFS boot), through
+    /dev/bsg/ufs-bsg0, after a read on the same path matched sysfs.
+(qbootctl swaps only a fixed list of partitions, which is why this exists.)
+
+Before writing, every GPT is checked (header and table CRCs, primary ==
+backup) and the disks that change are saved under /var/lib/asphalt/gpt-backups.
+The backup copy is written first, so a write cut short leaves the primary
+table, which ABL reads, unchanged.
+
+  asphalt-slot status
+  asphalt-slot switch a|b [--dry-run] [--force]
+  asphalt-slot reboot a|b          switch, then reboot
+  asphalt-slot mark-successful     mark the running (active) slot booted OK
+
+mark-successful is what Android's update_verifier does once a boot is good:
+it sets "successful" on the active slot's partitions, so ABL stops counting
+down its retries (at 0 it marks the slot unbootable and falls back to the
+other one). asphalt-slot-mark-successful.service runs it late in boot.
+"""
+import argparse
+import fcntl
+import glob
+import json
+import os
+import struct
+import subprocess
+import sys
+import time
+import uuid
+import zlib
+from pathlib import Path
+
+BACKUPS = Path("/var/lib/asphalt/gpt-backups")
+KEEP_BACKUPS = 10
+AB_BYTE = 54  # entry offset 48 (attributes) + 6
+PRIORITY, ACTIVE, RETRY, SUCCESSFUL, UNBOOTABLE = 0x03, 0x04, 0x38, 0x40, 0x80
+BLKSSZGET, BLKGETSIZE64 = 0x1268, 0x80081272
+# fastboot's A/B flags for the target slot: priority 3, active, retry 7.
+TARGET_FLAGS = 0x3F
+
+UFS_BSG = "/dev/bsg/ufs-bsg0"
+BOOT_LUN_SYSFS = "/sys/devices/platform/soc*/*.ufshc/attributes/boot_lun_enabled"
+BOOT_LUN = {"a": 1, "b": 2}
+SG_IO = 0x2285
+# A slot worth switching to starts each of these with its header magic.
+# dtbo is excluded, as Mainline linux require flashing dummy dtbo
+IMAGE_MAGIC = {"boot": b"ANDROID!", "vendor_boot": b"VNDRBOOT", "vbmeta": b"AVB0"}
+
+
+class GptError(Exception):
+    pass
+
+
+class Disk:
+    def __init__(self, path):
+        self.path = path
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            self.sector = struct.unpack("I", fcntl.ioctl(fd, BLKSSZGET, b"\0" * 4))[0]
+            self.size = struct.unpack("Q", fcntl.ioctl(fd, BLKGETSIZE64, b"\0" * 8))[0]
+            self.banks = []
+            for lba in (1, self.size // self.sector - 1):
+                self.banks.append(self._read_bank(fd, lba))
+            self.raw = [os.pread(fd, length, offset) for offset, length in self._regions()]
+        finally:
+            os.close(fd)
+        if self.banks[0]["table"] != self.banks[1]["table"]:
+            raise GptError(f"{path}: primary and backup partition tables differ")
+        self.table = bytearray(self.banks[0]["table"])
+        self.original = bytes(self.table)
+
+    def _read_bank(self, fd, lba):
+        header = os.pread(fd, self.sector, lba * self.sector)
+        if header[:8] != b"EFI PART":
+            raise GptError(f"{self.path}: no GPT header at LBA {lba}")
+        size, crc = struct.unpack_from("<II", header, 12)
+        if not 92 <= size <= self.sector:
+            raise GptError(f"{self.path}: bad header size {size}")
+        check = bytearray(header[:size])
+        struct.pack_into("<I", check, 16, 0)
+        if zlib.crc32(check) != crc:
+            raise GptError(f"{self.path}: header CRC mismatch at LBA {lba}")
+        (my_lba,) = struct.unpack_from("<Q", header, 24)
+        table_lba, count, entry_size, table_crc = struct.unpack_from("<QIII", header, 72)
+        if my_lba != lba or count > 1024 or not 128 <= entry_size <= 1024:
+            raise GptError(f"{self.path}: implausible header at LBA {lba}")
+        table = os.pread(fd, count * entry_size, table_lba * self.sector)
+        if zlib.crc32(table) != table_crc:
+            raise GptError(f"{self.path}: partition table CRC mismatch (header LBA {lba})")
+        self.count, self.entry_size = count, entry_size
+        return {"lba": lba, "header": header, "header_size": size, "table_lba": table_lba, "table": table}
+
+    def _regions(self):
+        # Each bank's header sector and its table, as (offset, length).
+        for bank in self.banks:
+            yield bank["lba"] * self.sector, self.sector
+            yield bank["table_lba"] * self.sector, len(bank["table"])
+
+    def entries(self):
+        for i in range(self.count):
+            offset = i * self.entry_size
+            entry = self.table[offset:offset + self.entry_size]
+            if any(entry[:16]):
+                yield entry[56:128].decode("utf-16-le").rstrip("\0"), offset
+
+    def changed(self):
+        return bytes(self.table) != self.original
+
+    def write(self):
+        table = bytes(self.table)
+        table_crc = zlib.crc32(table)
+        fd = os.open(self.path, os.O_RDWR | os.O_SYNC)
+        try:
+            for bank in reversed(self.banks):  # backup first, primary last
+                header = bytearray(bank["header"])
+                struct.pack_into("<I", header, 88, table_crc)
+                struct.pack_into("<I", header, 16, 0)
+                struct.pack_into("<I", header, 16, zlib.crc32(header[:bank["header_size"]]))
+                os.pwrite(fd, table, bank["table_lba"] * self.sector)
+                os.pwrite(fd, header, bank["lba"] * self.sector)
+                os.fsync(fd)
+        finally:
+            os.close(fd)
+        if Disk(self.path).table != self.table:
+            raise GptError(f"{self.path}: read-back after writing does not match")
+
+
+def ufs_boot_lun_query(write_value=None):
+    """Read (or write, then return 0) bBootLunEn with one UFS query UPIU.
+
+    Layout from include/uapi/scsi/scsi_bsg_ufs.h (struct ufs_bsg_request:
+    msgcode + 12-byte UPIU header + 20-byte query) and linux/bsg.h (sg_io_v4).
+    """
+    import ctypes
+    write = write_value is not None
+    if write and write_value not in BOOT_LUN.values():
+        raise GptError(f"refusing to write boot LUN {write_value!r}")
+    header = bytes([0x16, 0, 0, 0,                    # QUERY_REQ, flags, lun, tag
+                    0, 0x81 if write else 0x01, 0, 0,  # std write / std read
+                    0, 0, 0, 0])                       # no data segment
+    query = struct.pack(">BBBBHHI8x", 0x04 if write else 0x03,  # WRITE/READ_ATTR
+                        0x00, 0, 0, 0, 0, write_value or 0)     # IDN 0: bBootLunEn
+    request = struct.pack("<I", 0x16) + header + query
+    assert len(request) == 36
+    req = ctypes.create_string_buffer(request, len(request))
+    rsp = ctypes.create_string_buffer(64)
+    sgio = bytearray(160)
+    struct.pack_into("<iIII", sgio, 0, ord("Q"), 0, 2, len(request))  # SCSI, transport
+    struct.pack_into("<Q", sgio, 16, ctypes.addressof(req))
+    struct.pack_into("<I", sgio, 44, len(rsp))
+    struct.pack_into("<Q", sgio, 48, ctypes.addressof(rsp))
+    fd = os.open(UFS_BSG, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, SG_IO, sgio, True)
+    finally:
+        os.close(fd)
+    driver, transport, device = struct.unpack_from("<III", sgio, 108)
+    (info,) = struct.unpack_from("<I", sgio, 124)
+    (result,) = struct.unpack_from("<i", rsp.raw, 0)
+    response = rsp.raw[8 + 6]
+    if driver or transport or device or info or result or response:
+        raise GptError(f"UFS query failed (driver {driver} transport {transport} device {device} "
+                       f"info {info} result {result} response {response})")
+    if rsp.raw[8] != 0x36 or rsp.raw[8 + 12] != (0x04 if write else 0x03):
+        raise GptError("UFS query: unexpected response UPIU")
+    return 0 if write else struct.unpack_from(">I", rsp.raw, 8 + 12 + 8)[0]
+
+
+def read_boot_lun():
+    paths = glob.glob(BOOT_LUN_SYSFS)
+    if len(paths) != 1:
+        raise GptError("UFS boot_lun_enabled not found in sysfs")
+    sysfs = int(Path(paths[0]).read_text(), 16)
+    bsg = ufs_boot_lun_query()
+    if bsg != sysfs:
+        raise GptError(f"boot LUN: bsg reads {bsg}, sysfs {sysfs}; not touching it")
+    if sysfs not in BOOT_LUN.values():
+        raise GptError(f"boot LUN is {sysfs}, expected 1 or 2; not touching it")
+    return sysfs
+
+
+def set_boot_lun(target):
+    want = BOOT_LUN[target]
+    ufs_boot_lun_query(want)
+    got = read_boot_lun()
+    if got != want:
+        raise GptError(f"boot LUN reads {got} after writing {want}")
+
+
+def load_disks():
+    disks = []
+    for path in sorted(glob.glob("/dev/sd[a-z]")):
+        try:
+            disks.append(Disk(path))
+        except GptError as error:
+            if "no GPT header" in str(error):
+                continue
+            raise
+    return disks
+
+
+def pairs(disks):
+    names = {}
+    for disk in disks:
+        for name, offset in disk.entries():
+            if name in names:
+                raise GptError(f"partition label {name} appears twice")
+            names[name] = (disk, offset)
+    found, skipped = [], []
+    for name in sorted(names):
+        if not name.endswith("_a") or name[:-2] + "_b" not in names:
+            continue
+        base = name[:-2]
+        (disk_a, a), (disk_b, b) = names[name], names[base + "_b"]
+        if disk_a is not disk_b:
+            skipped.append(base)  # xbl family: chosen by the UFS boot LUN
+            continue
+        found.append((base, disk_a, a, b))
+    if not any(base == "boot" for base, *_ in found):
+        raise GptError("boot_a/boot_b not found on one disk")
+    return found, skipped
+
+
+def active_side(disk, a, b, base):
+    flags = (bool(disk.table[a + AB_BYTE] & ACTIVE), bool(disk.table[b + AB_BYTE] & ACTIVE))
+    if flags[0] == flags[1]:
+        raise GptError(f"{base}: {'both' if flags[0] else 'neither'} slot marked active; not touching anything")
+    return "a" if flags[0] else "b"
+
+
+def describe(flags):
+    text = f"prio {flags & PRIORITY} retry {(flags & RETRY) >> 3}"
+    for bit, name in ((ACTIVE, "active"), (SUCCESSFUL, "successful"), (UNBOOTABLE, "UNBOOTABLE")):
+        if flags & bit:
+            text += " " + name
+    return text
+
+
+def running_slot():
+    try:
+        for line in Path("/proc/bootconfig").read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "androidboot.slot_suffix":
+                return value.strip().strip('"').lstrip("_")
+    except OSError:
+        pass
+    return "unknown"
+
+
+def guid(disk, offset):
+    return str(uuid.UUID(bytes_le=bytes(disk.table[offset:offset + 16])))
+
+
+def status():
+    disks = load_disks()
+    found, skipped = pairs(disks)
+    sides = {}
+    for base, disk, a, b in found:
+        sides.setdefault(active_side(disk, a, b, base), []).append(base)
+        if base == "boot":
+            print(f"running slot: {running_slot()}")
+            print(f"boot_a: {describe(disk.table[a + AB_BYTE])}")
+            print(f"boot_b: {describe(disk.table[b + AB_BYTE])}")
+    for side in sorted(sides):
+        print(f"active on {side}: {' '.join(sides[side])}")
+    lun = read_boot_lun()
+    print(f"boot LUN: {lun} (xbl_{'a' if lun == 1 else 'b'}) for {' '.join(skipped) or '(none)'}")
+    return 0
+
+
+def backup(disks):
+    BACKUPS.mkdir(parents=True, exist_ok=True)
+    directory = BACKUPS / time.strftime("%Y%m%d-%H%M%S")
+    directory.mkdir()
+    meta = {}
+    for disk in disks:
+        name = os.path.basename(disk.path)
+        regions = list(disk._regions())
+        for index, ((offset, _), data) in enumerate(zip(regions, disk.raw)):
+            (directory / f"{name}-{index}-at-{offset}.bin").write_bytes(data)
+        meta[disk.path] = {"sector": disk.sector, "bytes": disk.size,
+                           "regions": [{"offset": o, "length": n} for o, n in regions]}
+    (directory / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
+    for old in sorted(p for p in BACKUPS.iterdir() if p.is_dir())[:-KEEP_BACKUPS]:
+        for file in old.iterdir():
+            file.unlink()
+        old.rmdir()
+    return directory
+
+
+def check_board():
+    # Only asphalt's ABL behaviour has been checked; elsewhere, use fastboot.
+    try:
+        compatible = Path("/proc/device-tree/compatible").read_bytes().split(b"\0")
+    except OSError:
+        compatible = []
+    if b"lenovo,asphalt" not in compatible:
+        raise GptError("only for the Lenovo Legion Y700 Gen 2 (lenovo,asphalt)")
+
+
+def check_images(target):
+    # Catches an empty or wiped slot; not a missing system in super.
+    bad = []
+    for name, magic in IMAGE_MAGIC.items():
+        try:
+            with open(f"/dev/disk/by-partlabel/{name}_{target}", "rb") as image:
+                if image.read(len(magic)) != magic:
+                    bad.append(f"{name}_{target}")
+        except OSError:
+            bad.append(f"{name}_{target} (unreadable)")
+    if bad:
+        raise GptError(f"slot {target} doesn't look bootable: no image header in {', '.join(bad)}; "
+                       "flash it first, or pass --force")
+
+
+def switch(target, dry_run, force=False):
+    check_board()
+    if not force:
+        check_images(target)
+    disks = load_disks()
+    found, skipped = pairs(disks)
+    lun = read_boot_lun()  # also proves the bsg path works before any write
+    plan = [(base, disk, a, b, active_side(disk, a, b, base)) for base, disk, a, b in found]
+    # After fastboot (or ABL itself) every pair points at one slot. A split
+    # means this device's bootloader swaps a different set than we do, or
+    # something already left it half-switched: stop rather than guess.
+    sides = {}
+    for base, _, _, _, current in plan:
+        sides.setdefault(current, []).append(base)
+    if len(sides) > 1 and not force:
+        detail = "; ".join(f"{side}: {' '.join(names)}" for side, names in sorted(sides.items()))
+        raise GptError(f"pairs are split between slots ({detail}); fix with fastboot --set-active, or pass --force")
+    for base, disk, a, b, current in plan:
+        new, old = (a, b) if target == "a" else (b, a)
+        if base == "boot" and disk.table[new + AB_BYTE] & UNBOOTABLE:
+            print(f"note: boot_{target} was marked unbootable; ABL will retry it 7 times")
+        if current != target:
+            ga, gb = bytes(disk.table[a:a + 16]), bytes(disk.table[b:b + 16])
+            disk.table[a:a + 16], disk.table[b:b + 16] = gb, ga
+        disk.table[new + AB_BYTE] = TARGET_FLAGS
+        disk.table[old + AB_BYTE] &= ~ACTIVE & 0xFF
+    for base, disk, a, b, current in plan:
+        moved = "swap " if current != target else "keep "
+        line = f"{moved}{base:14} {os.path.basename(disk.path)}  a={guid(disk, a)[:8]} b={guid(disk, b)[:8]}"
+        if base == "boot":
+            line += f"  boot_a: {describe(disk.table[a + AB_BYTE])} | boot_b: {describe(disk.table[b + AB_BYTE])}"
+        print(line)
+    want = BOOT_LUN[target]
+    print(f"boot LUN ({' '.join(skipped) or 'no xbl pairs'}): {lun} -> {want}")
+    changed = [disk for disk in disks if disk.changed()]
+    if dry_run:
+        print(f"dry run: would write {', '.join(d.path for d in changed) or 'no GPT'}"
+              f"{'' if lun == want else ', boot LUN'}")
+        return 0
+    if changed:
+        print(f"backed up GPTs to {backup(changed)} (boot LUN was {lun})")
+    for disk in changed:
+        disk.write()
+        print(f"wrote and verified {disk.path}")
+    if lun != want:
+        try:
+            set_boot_lun(target)
+        except (GptError, OSError) as error:
+            raise GptError(f"GPT is on slot {target} but the boot LUN write failed ({error}); "
+                           f"ABL will stop in fastboot: run fastboot --set-active={target} there")
+        print(f"boot LUN set to {want} and read back")
+    print(f"slot {target} is now active")
+    return 0
+
+
+def mark_successful():
+    check_board()
+    disks = load_disks()
+    found, _ = pairs(disks)
+    sides = {active_side(disk, a, b, base) for base, disk, a, b in found}
+    if len(sides) != 1:
+        raise GptError("pairs are split between slots; not marking anything")
+    slot = sides.pop()
+    running = running_slot()
+    if running not in ("unknown", slot):
+        raise GptError(f"running from slot {running} but slot {slot} is active; not marking")
+    for base, disk, a, b in found:
+        offset = (a if slot == "a" else b) + AB_BYTE
+        disk.table[offset] = (disk.table[offset] | SUCCESSFUL) & ~UNBOOTABLE & 0xFF
+    changed = [disk for disk in disks if disk.changed()]
+    if not changed:
+        print(f"slot {slot} is already marked successful")
+        return 0
+    print(f"backed up GPTs to {backup(changed)}")
+    for disk in changed:
+        disk.write()
+        print(f"wrote and verified {disk.path}")
+    print(f"slot {slot} marked successful")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Show or switch the A/B boot slot (like fastboot --set-active).")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status")
+    sub.add_parser("mark-successful")
+    for name in ("switch", "reboot"):
+        command = sub.add_parser(name)
+        command.add_argument("slot", choices=("a", "b"))
+        if name == "switch":
+            command.add_argument("--dry-run", action="store_true")
+            command.add_argument("--force", action="store_true", help="switch even if pairs are split between slots")
+    args = parser.parse_args()
+    try:
+        if os.geteuid() != 0:
+            raise GptError("must run as root (the GPTs are read from the raw disks)")
+        if args.command == "status":
+            return status()
+        if args.command == "mark-successful":
+            return mark_successful()
+        result = switch(args.slot, getattr(args, "dry_run", False), getattr(args, "force", False))
+        if args.command == "reboot" and result == 0:
+            subprocess.run(["systemctl", "reboot"], check=True)
+        return result
+    except (GptError, OSError, subprocess.CalledProcessError) as error:
+        print(f"asphalt-slot: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

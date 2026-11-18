@@ -1,0 +1,12 @@
+[Unit]
+Description=Mark the running A/B slot as booted successfully
+# Like Android's update_verifier: only once the system is up. If boot never
+# gets here, ABL keeps counting down retries and eventually falls back.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/asphalt-slot mark-successful
+
+[Install]
+WantedBy=multi-user.target
