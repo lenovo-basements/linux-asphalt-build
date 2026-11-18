@@ -43,7 +43,7 @@ for supply in Path("/sys/class/power_supply").glob("*"):
                     "charge_full", "energy_now", "energy_full", "voltage_now")
         if (supply / key).exists()
     }
-for name in ("apss", "aosd", "cxsd", "ddr"):
+for name in ("apss", "aosd", "cxsd", "ddr", "adsp", "slpi", "slpi_island", "cdsp"):
     record["soc_sleep"][name] = read("/sys/kernel/debug/qcom_stats/" + name)
 # These cached runtime-PM attributes do not resume the device. They describe
 # the awake endpoints, not the device state during system suspend callbacks.

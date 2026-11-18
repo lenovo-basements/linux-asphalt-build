@@ -141,16 +141,23 @@ def drain_device(device):
             break
 
 
+def _run_user_unit(user, uid, unit, *cmd):
+    pw = pwd.getpwnam(user)
+    runtime = f'/run/user/{uid}'
+    subprocess.run([
+        'setpriv', f'--reuid={uid}', f'--regid={pw.pw_gid}', '--init-groups',
+        'env', f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
+        'systemd-run', '--user', '--collect', f'--unit={unit}',
+        '--property=Type=exec', *cmd,
+    ], check=True, timeout=5)
+
+
 def screenshot():
     # The user manager launches outside this service's ProtectHome namespace.
     # No user-controlled program is executed as root.
     user, uid = active_session()
-    runtime = f'/run/user/{uid}'
     helper = str(Path(pwd.getpwnam(user).pw_dir) / '.config/hypr/screenshot-control')
-    subprocess.run(['runuser', '-u', user, '--', 'env',
-        f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
-        'systemd-run', '--user', '--collect', '--unit=asphalt-button-screenshot',
-        '--property=Type=exec', '/usr/bin/env', helper], check=True, timeout=5)
+    _run_user_unit(user, uid, 'asphalt-button-screenshot', helper)
 
 
 def publish_held(state):
@@ -177,13 +184,9 @@ def action(name):
             print(f'power-button session lookup failed: {error}', file=sys.stderr, flush=True)
             return
         else:
-            runtime = f'/run/user/{uid}'
             helper = str(Path(pwd.getpwnam(user).pw_dir) / '.config/hypr/idle-control')
             try:
-                subprocess.run(['runuser', '-u', user, '--', 'env',
-                    f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
-                    'systemd-run', '--user', '--collect', '--unit=asphalt-button-sleep',
-                    '--property=Type=exec', '/usr/bin/env', helper, 'button'], check=True, timeout=5)
+                _run_user_unit(user, uid, 'asphalt-button-sleep', helper, 'button')
             except (OSError, subprocess.SubprocessError) as error:
                 print(f'power-button desktop handoff failed: {error}', file=sys.stderr, flush=True)
             return
