@@ -148,7 +148,7 @@ def _run_user_unit(user, uid, unit, *cmd):
         'setpriv', f'--reuid={uid}', f'--regid={pw.pw_gid}', '--init-groups',
         'env', f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
         'systemd-run', '--user', '--collect', f'--unit={unit}',
-        '--property=Type=exec', *cmd,
+        '--property=Type=exec', '/usr/bin/env', *cmd,
     ], check=True, timeout=5)
 
 
