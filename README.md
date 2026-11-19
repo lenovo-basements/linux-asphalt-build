@@ -20,6 +20,8 @@ Scripts and device support for running **Arch Linux ARM** on the
 - I take **zero** responsibility if something goes wrong, or if you get fired because Slack video calls break, or Microsoft Teams stops working after a kernel update. If you point at me for that, I’ll laugh at you.
 - This is **not** a complete, plug-and-play rootfs. You must build the dependencies yourself.
 - i'm not gonna submit this to LKML, dealing with android giving me enough headache, i didn't want an extras
+- this initially start as personal project (and mainly for reading eroge). so yea, i can't fix everything myself, especially gaming.
+- this rootfs / mainline kernel **serve** as base foundation, aiming to get base function solid and properly working, whatever you do is up to you
 
 ## Resources
 
@@ -40,7 +42,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **GPU** | Adreno 730 as Freedreno 725 (`0x07030002`). [Reference](https://raw.githubusercontent.com/termux/termux-packages/f8013fe24f/packages/mesa/0016-unofficial_support_adreno_710_720_722.patch) |
 | **Display** | 30/60/120/144 Hz reported correctly. VRR from ~48 Hz up to 144 Hz. 30 Hz is supported in hardware, but Lenovo never set `mdss-dsi-qsync-min-refresh-rate` to 30, so the default floor is currently 48 Hz. [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
 | **microSD** | Tested with SanDisk Ultra (A1) (mount under `/mnt/microSD` to avoid name conflict with external drive with same name), speed is vary, not gonnna grab all of them and do benchmark for sure |
-| **Touch** | Novatek NT36523n — upstream + device-specific changes, touch gestures is temporary on halt (the tricky part is `game_mode` is conflict with pen mode (palm rejection), so touch gestures kernel is temporary on halt until i finish pen side) |
+| **Touch** | Novatek NT36523n — upstream + device-specific changes. |
 | **Fuel gauge** | battery report is now working properly with `power_now` and `µAh unit` implement (lenovo firmware only answer `power_now` with state of charge (measure with Current × Voltage) SC8280XP on lenovo sm8475 use µAh instead of mAh) |
 | **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera and `gc02m1` for NEC (need confirmation for NEC), camera flash is now support (`pm8350c_flash`). |
 | **USB** | Working, including host mode, DP-alt, DP-alt audio, and dual-port arbitration. usb on y700 (pretty much all generations) have usb port priority, more info on [port priority](/docs/port_priority.md) + onsemi FSA4480 type c port switch also working, now NCM is supported as well|
@@ -51,25 +53,27 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Suspend** | Works via normal sleep + power button. s2idle / deep, both are now working (5 hours of full suspend result with `apss`: 100%, `aosd`/`cxsd`/`ddr`: 99.9%, `adsp`: 100%, `slpi`/`slpi_island`: 100% and `cdsp`: 100%, battery consumption is around `0.19%/hr` (or `< 8.2 mA` on `4341 mAh`) approximately, results vary depends on battery age, usage, etc.)|
 | **Charging** | base charging code is using upstream code, with bypass charging (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
 | **Thermal** | Working. Power profiles included, 8 ADC thermistor are now implemented (`pmk8350_die_temp`, `pm8350_die_temp`, `pm8350_msm_therm`, `pm8350_cam_flash_therm`, `pm8350_hot_pocket_therm`, `pm8350_wide_rfc_therm`, `pm8350_chg_therm2`, `pm8350_usb1_conn_ts_ntc`,) temperature report is more or less accurated compare to zui (for example: `pm8350_chg_therm2` on mainline is 38.3 °C vs 37.8 °C on stock. many factor affect the report, so take it with gain of salt) |
+| **HDR (Internal)** | Internal panel HDR is now supported (require dummy EDID for each WMs) |
 
 ## What doesn’t work / TO-DO
 
 | Component | Notes |
 | --- | --- |
-| **HDR** | External monitor (DHI-PM19-S201S) doesn’t support HDR. Internal panel HDR is now supported (require dummy EDID for each WMs) |
-| **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom |
-| **Stylus** | AP500U / AP501U (`Picasso`). which i don’t have (AP501U should arrives monday or tuesday), initial support is already on kernel. |
+| **HDR (External)** | External monitor that i own (DHI-PM19-S201S) doesn’t support HDR. |
+| **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom, use [enhanced-h264ify](https://chromewebstore.google.com/detail/enhanced-h264ify/omkfmpieigblcllmkgbflkikinpkodlk) and kill AV1. |
+| **Stylus** | AP500U / AP501U (`Picasso`). WIP on userspace, initial support is already on kernel. |
 | **Modem** | this tablet doesn't have modem, you can't add something that doesn't have on first place. |
 | **GPS** | this tablet doesn't have gps antenna, so don't bring it for hiking or camping, use compass, or your phone. |
 | **NFC** | this tablet doesn't have nfc, so don't touch your card on it |
+| **Gestures** | touch gestures is temporary on halt (the tricky part is `game_mode` is conflict with pen mode (palm rejection), so touch gestures kernel is temporary on halt until i finish pen side), only DT2W is implemented for now. |
 
 ## Technical notes
 | Component | Notes |
 | --- | --- |
 | **WIFI** | ath11k have D3cold failure which is unique to lenovo (lmao), so 2s firmware reload after suspend is normal (don't worry, it's automatic), WoW policy won't works there [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) |
 | **Browser** | Youtube ambient mode breaks zero-copy video path due to YUV have to be convert and copied into an RGBA canvas, (not only that, it break cross-fade, so vrr never works it'll keep force render at 144hz) fixable, but will break many aspects. (2.8w (HDR), 2.71w (SDR) vs 33w (up to 35w with hdr) battery usage with ambient mode enabled)|
-| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
 | **Persist** | healthy persist partition is required for hardware functional on mainline linux, **DO NOT** boot this rootfs if your persist is corrupted, or broken, if you're on zui **ALWAYS** backup clean persist, you **CAN'T** borrow it from someone else (sure corrupted persist can still boots, but i won't **guarantee** hardware functionally) |
+| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
 
 ## Relock bootloader
 

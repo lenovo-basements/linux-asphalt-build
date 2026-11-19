@@ -193,8 +193,7 @@ if [[ "$DESKTOP" == hyprland ]]; then
     HYPR_PKGS=(
         hyprland xdg-desktop-portal-hyprland hyprpolkitagent hypridle
         greetd quickshell mako fuzzel kitty squeekboard feedbackd
-        wl-clipboard grim gnome-keyring xdg-user-dirs dconf polkit
-        thunar gvfs tumbler
+        wl-clipboard grim nautilus gnome-keyring xdg-user-dirs dconf polkit
     )
 fi
 

@@ -53,31 +53,12 @@ reg_exposure << 4 & 0xF0 as 0x3e02 [7:4]
 
 well it's straightforward, from CamX tuning blob, but for now, camera calibration contain following table
 
-```
-algorithms:
-  - BlackLevel:
-  - Awb:
-  - Ccm:
-      ccms:
-        - ct: 3580
-          ccm: [  2.1210, -1.3615,  0.2405,
-                 -0.2392,  1.2840, -0.0448,
-                 -0.1013, -0.8230,  1.9243 ]
-        - ct: 4630
-          ccm: [  1.9161, -1.1088,  0.1927,
-                 -0.2137,  1.4293, -0.2156,
-                 -0.0213, -0.6407,  1.6620 ]
-        - ct: 5530
-          ccm: [  1.9175, -1.0899,  0.1725,
-                 -0.1279,  1.2718, -0.1439,
-                  0.0296, -0.5280,  1.4984 ]
-        - ct: 6810
-          ccm: [  1.8280, -0.9319,  0.1039,
-                 -0.1105,  1.3058, -0.1954,
-                  0.0832, -0.4820,  1.3988 ]
-  - Adjust:
-  - Agc:
-```
+TL;DR:
+
+- LSC for each lens are now implements
+- AWB, lens shading are also implements
+- initial AF is also supported, dogshit, but works.
+- trying to get marco lens less dogshit, and more optimization to make it usable.
 
 ## Camera config shitfest
 
@@ -87,4 +68,4 @@ algorithms:
 
 - the next shitfest is, autofocus, it actually didn't works at all until i switch to GT9768, now it's (partially) working, with focus scores around 460~512 (1920×1080, using snapshot as pirewire report), [this patch](https://github.com/lenovo-basements/linux-asphalt-build/blob/main/pkgbuilds/libcamera/0005-softisp-Add-tuned-contrast-autofocus.patch) is requirement to get autofocus working, however, with limitations, you can't use touch control to get AF locked on snapshot, yet?
 
-- camera will be slowly improving, the WIP feature is getting white balance correctly report as closes as ZUI (testing inside basement with well light give me around 168/170/166, and piss filter no longer exists, however, this didn't fix the low light and still give you a piss filter)
+- camera will be slowly improving, the WIP feature is getting white balance correctly report as closes as ZUI.
