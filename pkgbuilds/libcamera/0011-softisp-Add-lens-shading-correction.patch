@@ -1,0 +1,420 @@
+From 680f75284d592c86a4a1b3ae08161f06aaa93d56 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Fri, 20 Nov 2026 03:59:11 +0700
+Subject: [PATCH 11/11] softisp: Add lens shading correction
+
+Add an Lsc algorithm to the simple IPA. It reads 17x13 R/G/B gain meshes
+per colour temperature from the tuning file, interpolates them for the
+AWB temperature and passes the result to the debayer as an RGBA8 mesh
+(gain = 1 + value / 255 * range), re-encoded only on a temperature change
+of 100K or more.
+
+The GPU debayer uploads the mesh to texture unit 2 when its revision
+changes and both Bayer shaders multiply each pixel by the linearly
+filtered gain right after black level subtraction. Without Lsc tuning
+lsc_range stays 0 and the shaders skip it. The CPU debayer ignores it.
+---
+ .../internal/software_isp/debayer_params.h    |  13 ++
+ src/ipa/simple/algorithms/lsc.cpp             | 137 ++++++++++++++++++
+ src/ipa/simple/algorithms/lsc.h               |  47 ++++++
+ src/ipa/simple/algorithms/meson.build         |   1 +
+ src/libcamera/shaders/bayer_1x_packed.frag    |  17 +++
+ src/libcamera/shaders/bayer_unpacked.frag     |  19 +++
+ src/libcamera/software_isp/debayer_egl.cpp    |  38 +++++
+ src/libcamera/software_isp/debayer_egl.h      |   6 +
+ 8 files changed, 278 insertions(+)
+ create mode 100644 src/ipa/simple/algorithms/lsc.cpp
+ create mode 100644 src/ipa/simple/algorithms/lsc.h
+
+diff --git a/include/libcamera/internal/software_isp/debayer_params.h b/include/libcamera/internal/software_isp/debayer_params.h
+index e4b6eac..86392f0 100644
+--- a/include/libcamera/internal/software_isp/debayer_params.h
++++ b/include/libcamera/internal/software_isp/debayer_params.h
+@@ -10,6 +10,7 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <stdint.h>
+ 
+ #include "libcamera/internal/matrix.h"
+@@ -27,6 +28,18 @@ struct DebayerParams {
+ 	float gamma = 1.0;
+ 	float contrastExp = 1.0;
+ 	RGB<float> gains = RGB<float>({ 1.0, 1.0, 1.0 });
++
++	/*
++	 * Lens shading correction: a kLscWidth x kLscHeight mesh of R/G/B gains
++	 * spanning the image edge to edge, as RGBA8 texels. gain = 1 + v / 255 *
++	 * lscRange; lscRange 0 means off. The GPU interpolates between nodes.
++	 * lscRevision changes whenever the mesh does, so it's uploaded only then.
++	 */
++	static constexpr unsigned int kLscWidth = 17;
++	static constexpr unsigned int kLscHeight = 13;
++	std::array<uint8_t, kLscWidth * kLscHeight * 4> lscMesh = {};
++	float lscRange = 0.0;
++	uint32_t lscRevision = 0;
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/src/ipa/simple/algorithms/lsc.cpp b/src/ipa/simple/algorithms/lsc.cpp
+new file mode 100644
+index 0000000..2a5644a
+--- /dev/null
++++ b/src/ipa/simple/algorithms/lsc.cpp
+@@ -0,0 +1,137 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Lens shading correction
++ *
++ * Tuning (per sensor):
++ *
++ *   - Lsc:
++ *       meshes:
++ *         - ct: 5000
++ *           r: [ 221 gains, 17 x 13, row-major, top-left first ]
++ *           g: [ ... ]
++ *           b: [ ... ]
++ *
++ * Nodes span the image edge to edge. The mesh for the AWB colour temperature
++ * is interpolated between the two nearest entries and handed to the debayer
++ * as an RGBA8 texture; the GPU interpolates between nodes.
++ */
++
++#include "lsc.h"
++
++#include <algorithm>
++#include <cmath>
++
++#include <libcamera/base/log.h>
++#include <libcamera/base/utils.h>
++
++namespace {
++
++constexpr unsigned int kTemperatureThreshold = 100;
++
++}
++
++namespace libcamera {
++
++namespace ipa::soft::algorithms {
++
++LOG_DEFINE_CATEGORY(IPASoftLsc)
++
++int Lsc::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
++{
++	static const char *const channels[] = { "r", "g", "b" };
++
++	for (const auto &node : tuningData["meshes"].asList()) {
++		Mesh mesh;
++		mesh.ct = node["ct"].get<unsigned int>(0);
++		for (unsigned int c = 0; c < 3; c++) {
++			const ValueNode &list = node[channels[c]];
++			if (!list.isList() || list.size() != kNodes) {
++				LOG(IPASoftLsc, Error)
++					<< "Mesh for " << mesh.ct << "K: '" << channels[c]
++					<< "' needs " << kNodes << " gains";
++				return -EINVAL;
++			}
++			unsigned int i = 0;
++			for (const auto &value : list.asList()) {
++				const float gain = value.get<float>(1.0f);
++				if (!std::isfinite(gain) || gain < 0.5f || gain > 16.0f) {
++					LOG(IPASoftLsc, Error) << "Gain out of range: " << gain;
++					return -EINVAL;
++				}
++				mesh.gains[c][i++] = gain;
++			}
++		}
++		meshes_.push_back(mesh);
++	}
++
++	if (meshes_.empty()) {
++		LOG(IPASoftLsc, Error) << "No 'meshes' in the Lsc tuning";
++		return -EINVAL;
++	}
++
++	std::sort(meshes_.begin(), meshes_.end(),
++		  [](const Mesh &a, const Mesh &b) { return a.ct < b.ct; });
++	return 0;
++}
++
++void Lsc::encode(unsigned int ct, DebayerParams *params)
++{
++	/* Linear in colour temperature between the two nearest meshes. */
++	const Mesh *lo = &meshes_.front(), *hi = &meshes_.front();
++	float t = 0.0f;
++	if (ct >= meshes_.back().ct) {
++		lo = hi = &meshes_.back();
++	} else if (ct > meshes_.front().ct) {
++		auto it = std::find_if(meshes_.begin(), meshes_.end(),
++				       [ct](const Mesh &m) { return m.ct >= ct; });
++		hi = &*it;
++		lo = &*(it - 1);
++		t = static_cast<float>(ct - lo->ct) / (hi->ct - lo->ct);
++	}
++
++	std::array<std::array<float, kNodes>, 3> gains;
++	float maxGain = 1.0f;
++	for (unsigned int c = 0; c < 3; c++) {
++		for (unsigned int i = 0; i < kNodes; i++) {
++			gains[c][i] = lo->gains[c][i] + t * (hi->gains[c][i] - lo->gains[c][i]);
++			maxGain = std::max(maxGain, gains[c][i]);
++		}
++	}
++
++	/* 8 bits over [1, maxGain]: gains below 1 aren't corrected. */
++	const float range = maxGain - 1.0f;
++	for (unsigned int i = 0; i < kNodes; i++) {
++		for (unsigned int c = 0; c < 3; c++) {
++			const float v = range > 0.0f ? (gains[c][i] - 1.0f) / range : 0.0f;
++			params->lscMesh[i * 4 + c] =
++				static_cast<uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
++		}
++		params->lscMesh[i * 4 + 3] = 255;
++	}
++	params->lscRange = range;
++	params->lscRevision = ++revision_;
++}
++
++void Lsc::prepare(IPAContext &context, [[maybe_unused]] const uint32_t frame,
++		  [[maybe_unused]] IPAFrameContext &frameContext,
++		  DebayerParams *params)
++{
++	const unsigned int ct = context.activeState.awb.temperatureK;
++
++	/*
++	 * params is shared with the debayer and outlives frames: re-encode on a
++	 * bigger temperature change, or if the mesh was never written.
++	 */
++	if (revision_ && params->lscRevision == revision_ &&
++	    utils::abs_diff(ct, lastCt_) < kTemperatureThreshold)
++		return;
++
++	encode(ct, params);
++	lastCt_ = ct;
++}
++
++REGISTER_IPA_ALGORITHM(Lsc, "Lsc")
++
++} /* namespace ipa::soft::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/simple/algorithms/lsc.h b/src/ipa/simple/algorithms/lsc.h
+new file mode 100644
+index 0000000..f666ee3
+--- /dev/null
++++ b/src/ipa/simple/algorithms/lsc.h
+@@ -0,0 +1,47 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Lens shading correction
++ */
++
++#pragma once
++
++#include <array>
++#include <vector>
++
++#include "algorithm.h"
++
++namespace libcamera {
++
++namespace ipa::soft::algorithms {
++
++class Lsc : public Algorithm
++{
++public:
++	Lsc() = default;
++	~Lsc() = default;
++
++	int init(IPAContext &context, const ValueNode &tuningData) override;
++	void prepare(IPAContext &context,
++		     const uint32_t frame,
++		     IPAFrameContext &frameContext,
++		     DebayerParams *params) override;
++
++private:
++	static constexpr unsigned int kNodes =
++		DebayerParams::kLscWidth * DebayerParams::kLscHeight;
++
++	struct Mesh {
++		unsigned int ct;
++		std::array<std::array<float, kNodes>, 3> gains; /* R, G, B */
++	};
++
++	void encode(unsigned int ct, DebayerParams *params);
++
++	std::vector<Mesh> meshes_;
++	unsigned int lastCt_ = 0;
++	uint32_t revision_ = 0;
++};
++
++} /* namespace ipa::soft::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/simple/algorithms/meson.build b/src/ipa/simple/algorithms/meson.build
+index 73c6372..c9f6e55 100644
+--- a/src/ipa/simple/algorithms/meson.build
++++ b/src/ipa/simple/algorithms/meson.build
+@@ -6,4 +6,5 @@ soft_simple_ipa_algorithms = files([
+     'agc.cpp',
+     'blc.cpp',
+     'ccm.cpp',
++    'lsc.cpp',
+ ])
+diff --git a/src/libcamera/shaders/bayer_1x_packed.frag b/src/libcamera/shaders/bayer_1x_packed.frag
+index 0b641a5..aee08b4 100644
+--- a/src/libcamera/shaders/bayer_1x_packed.frag
++++ b/src/libcamera/shaders/bayer_1x_packed.frag
+@@ -71,6 +71,20 @@ uniform vec3 blacklevel;
+ uniform float gamma;
+ uniform float contrastExp;
+ 
++/*
++ * Lens shading: 17x13 R/G/B gain mesh spanning the image edge to edge,
++ * gain = 1 + texel * lsc_range (0 = off). Nodes sit on texel centres.
++ */
++uniform sampler2D       lsc_tex;
++uniform float           lsc_range;
++
++vec3 lsc_gain(vec2 pos)
++{
++    const vec2 nodes = vec2(17.0, 13.0);
++    vec2 t = (clamp(pos, 0.0, 1.0) * (nodes - 1.0) + 0.5) / nodes;
++    return vec3(1.0) + texture2D(lsc_tex, t).rgb * lsc_range;
++}
++
+ float apply_contrast(float value)
+ {
+ 	// Apply simple S-curve
+@@ -232,6 +246,9 @@ void main(void)
+ 	 */
+ 	rgb = (rgb - blacklevel) / (1.0 - blacklevel);
+ 
++	if (lsc_range > 0.0)
++		rgb *= lsc_gain(textureOut);
++
+ 	/* Apply AWB gains, and saturate each channel at sensor range */
+ 	rgb = clamp(rgb * awb, vec3(0.0), vec3(1.0));
+ 
+diff --git a/src/libcamera/shaders/bayer_unpacked.frag b/src/libcamera/shaders/bayer_unpacked.frag
+index 10c5e94..30604f2 100644
+--- a/src/libcamera/shaders/bayer_unpacked.frag
++++ b/src/libcamera/shaders/bayer_unpacked.frag
+@@ -29,6 +29,22 @@ uniform mat3            ccm;
+ uniform vec3            blacklevel;
+ uniform float           gamma;
+ uniform float           contrastExp;
++uniform vec2            tex_size;
++uniform vec2            tex_bayer_first_red;
++
++/*
++ * Lens shading: 17x13 R/G/B gain mesh spanning the image edge to edge,
++ * gain = 1 + texel * lsc_range (0 = off). Nodes sit on texel centres.
++ */
++uniform sampler2D       lsc_tex;
++uniform float           lsc_range;
++
++vec3 lsc_gain(vec2 pos)
++{
++    const vec2 nodes = vec2(17.0, 13.0);
++    vec2 t = (clamp(pos, 0.0, 1.0) * (nodes - 1.0) + 0.5) / nodes;
++    return vec3(1.0) + texture2D(lsc_tex, t).rgb * lsc_range;
++}
+ 
+ float apply_contrast(float value)
+ {
+@@ -135,6 +151,9 @@ void main(void) {
+      */
+     rgb = (rgb - blacklevel) / (1.0 - blacklevel);
+ 
++    if (lsc_range > 0.0)
++        rgb *= lsc_gain((center.zw - tex_bayer_first_red) / tex_size);
++
+     /* Apply AWB gains, and saturate each channel at sensor range */
+     rgb = clamp(rgb * awb, vec3(0.0), vec3(1.0));
+ 
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index b154fb4..db50089 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -121,6 +121,8 @@ int DebayerEGL::getShaderVariableLocations(void)
+ 	blackLevelUniformDataIn_ = glGetUniformLocation(programId_, "blacklevel");
+ 	gammaUniformDataIn_ = glGetUniformLocation(programId_, "gamma");
+ 	contrastExpUniformDataIn_ = glGetUniformLocation(programId_, "contrastExp");
++	lscTextureUniform_ = glGetUniformLocation(programId_, "lsc_tex");
++	lscRangeUniform_ = glGetUniformLocation(programId_, "lsc_range");
+ 
+ 	textureUniformStep_ = glGetUniformLocation(programId_, "tex_step");
+ 	textureUniformSize_ = glGetUniformLocation(programId_, "tex_size");
+@@ -504,6 +506,37 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+ 	glUniform1f(contrastExpUniformDataIn_, params.contrastExp);
+ 	LOG(Debayer, Debug) << " contrastExpUniformDataIn_ " << contrastExpUniformDataIn_ << " data " << params.contrastExp;
+ 
++	/*
++	 * Lens shading: a small RGBA8 mesh, linearly filtered by the GPU. The
++	 * shader skips it while lsc_range is 0 (no Lsc tuning).
++	 */
++	const bool lsc = params.lscRange > 0.0f && lscTextureUniform_ >= 0;
++	if (lsc && params.lscRevision != lscRevision_) {
++		if (!lscTexture_)
++			glGenTextures(1, &lscTexture_);
++		glActiveTexture(GL_TEXTURE2);
++		glBindTexture(GL_TEXTURE_2D, lscTexture_);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
++		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, DebayerParams::kLscWidth,
++			     DebayerParams::kLscHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
++			     params.lscMesh.data());
++		glActiveTexture(GL_TEXTURE0);
++		lscRevision_ = params.lscRevision;
++		LOG(Debayer, Debug) << "LSC mesh revision " << lscRevision_
++				    << " range " << params.lscRange;
++	}
++	if (lsc && lscTexture_) {
++		glActiveTexture(GL_TEXTURE2);
++		glBindTexture(GL_TEXTURE_2D, lscTexture_);
++		glActiveTexture(GL_TEXTURE0);
++		glUniform1i(lscTextureUniform_, 2);
++	}
++	glUniform1f(lscRangeUniform_, lsc && lscTexture_ ? params.lscRange : 0.0f);
++
+ 	return;
+ }
+ 
+@@ -699,6 +732,11 @@ void DebayerEGL::stop()
+ 	eglImageOutCache_.clear();
+ 	eglImageInCache_.clear();
+ 
++	if (lscTexture_)
++		glDeleteTextures(1, &lscTexture_);
++	lscTexture_ = 0;
++	lscRevision_ = 0;
++
+ 	if (programId_)
+ 		glDeleteProgram(programId_);
+ }
+diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
+index d6223f3..89bb426 100644
+--- a/src/libcamera/software_isp/debayer_egl.h
++++ b/src/libcamera/software_isp/debayer_egl.h
+@@ -111,6 +111,12 @@ private:
+ 	/* Contrast */
+ 	GLint contrastExpUniformDataIn_;
+ 
++	/* Lens shading: mesh texture on unit 2, uploaded when its revision changes */
++	GLint lscTextureUniform_;
++	GLint lscRangeUniform_;
++	GLuint lscTexture_ = 0;
++	uint32_t lscRevision_ = 0;
++
+ 	Size nativeOutputSize_;
+ 	Rectangle window_;
+ 	std::unique_ptr<SwStatsCpu> stats_;
+-- 
+2.56.1
+

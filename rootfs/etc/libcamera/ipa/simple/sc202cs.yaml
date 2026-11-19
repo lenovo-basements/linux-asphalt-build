@@ -28,5 +28,5 @@ algorithms:
                  -0.0017, -0.6730,  1.6546 ]
   - Adjust:
   - Agc:
-      max-exposure-time: 33333
+      max-exposure-time: 80000
 ...

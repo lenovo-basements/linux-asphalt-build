@@ -22,10 +22,6 @@ colour bar variants; map the first one to TestPatternModeColorBars.
 Assisted-by: LLM
 Signed-off-by: lolipuru <banstellazz@gmail.com>
 ---
- src/ipa/libipa/camera_sensor_helper.cpp           | 13 +++++++++++++
- src/libcamera/sensor/camera_sensor_properties.cpp | 14 ++++++++++++++
- 2 files changed, 27 insertions(+)
-
 diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
 index 9457d62..9b06397 100644
 --- a/src/ipa/libipa/camera_sensor_helper.cpp
@@ -51,10 +47,10 @@ index 9457d62..9b06397 100644
  {
  public:
 diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
-index 2804315..d564368 100644
+index 2804315..efe8e8d 100644
 --- a/src/libcamera/sensor/camera_sensor_properties.cpp
 +++ b/src/libcamera/sensor/camera_sensor_properties.cpp
-@@ -503,6 +503,20 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+@@ -503,6 +503,25 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
  			},
  			.sensorDelays = { },
  		} },
@@ -82,4 +78,3 @@ index 2804315..d564368 100644
  			.testPatternModes = {
 -- 
 2.56.0
-

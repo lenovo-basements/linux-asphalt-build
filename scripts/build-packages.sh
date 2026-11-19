@@ -19,9 +19,9 @@ OUT="$REPO_DIR/pkgbuilds/out"
 KERNEL_BUILD=""
 
 ORDER=(qrtr pd-mapper hexagonrpc sensh qcom-va-driver hyprgrass hypr-osk-popup libcamera
-       asphalt-firmware asphalt-device-support linux-asphalt asphalt-slot)
+       asphalt-firmware asphalt-device-support linux-asphalt asphalt-slot asphalt-face)
 # Never in the image or a default build: install by hand from out/opt-in/.
-OPTIN=(asphalt-slot)
+OPTIN=(asphalt-slot asphalt-face)
 # Packaged straight from local checkouts; nothing to resolve at build time.
 NODEPS=(asphalt-firmware asphalt-device-support linux-asphalt)
 # Needed by later builds: install as soon as they're built.

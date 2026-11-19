@@ -19,10 +19,6 @@ menu indices map directly to the libcamera modes.
 Assisted-by: LLM
 Signed-off-by: lolipuru <banstellazz@gmail.com>
 ---
- src/ipa/libipa/camera_sensor_helper.cpp           | 13 +++++++++++++
- src/libcamera/sensor/camera_sensor_properties.cpp | 11 +++++++++++
- 2 files changed, 24 insertions(+)
-
 diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
 index 9b06397..f77ef38 100644
 --- a/src/ipa/libipa/camera_sensor_helper.cpp
@@ -48,12 +44,12 @@ index 9b06397..f77ef38 100644
  {
  public:
 diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
-index d564368..3dceea5 100644
+index efe8e8d..09f1c97 100644
 --- a/src/libcamera/sensor/camera_sensor_properties.cpp
 +++ b/src/libcamera/sensor/camera_sensor_properties.cpp
-@@ -517,6 +517,17 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+@@ -522,6 +522,22 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
  			},
- 			.sensorDelays = { },
  		} },
 +		{ "s5k4h7", {
 +			.unitCellSize = { 1120, 1120 },
@@ -76,4 +72,3 @@ index d564368..3dceea5 100644
  			.testPatternModes = {
 -- 
 2.56.0
-

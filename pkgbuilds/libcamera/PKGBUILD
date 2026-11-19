@@ -1,7 +1,7 @@
 pkgbase=libcamera
 pkgname=(libcamera libcamera-ipa libcamera-tools)
 pkgver=0.7.2
-pkgrel=4.7
+pkgrel=4.8
 pkgdesc="A complex camera support library for Linux, Android, and ChromeOS (asphalt sensor helpers)"
 arch=(aarch64)
 url="https://libcamera.org/"
@@ -24,6 +24,7 @@ source=(
   0008-softisp-Stabilize-tiled-white-balance.patch
   0009-softisp-Support-tiled-AWB-for-packed-Bayer-orders.patch
   0010-softisp-Tune-AE-convergence-and-highres-stats.patch
+  0011-softisp-Add-lens-shading-correction.patch
 )
 sha512sums=('a5656356617a01a7e8feb535380869d38b7c58139c7f99385af355629d3e1927bbd8847f7bec755c753c72f6b065df76de53c15f9af2e5901e83e7a144a2ddcd'
             SKIP SKIP SKIP
@@ -33,6 +34,7 @@ sha512sums=('a5656356617a01a7e8feb535380869d38b7c58139c7f99385af355629d3e1927bbd
             'b6e6d21ff5f7de3f61d2778ff3a58e0414d77cbcbefc17c7440b1a04a97e886c008c6db42ab00acd0a18f6a0dfebdf7dfef9ce4c455f9db4e3295096ada5d64a'
             'f662a66b2154f1358b2a9b96b9d468600df939db25f52eb7b3eacb75daaeaff8e5cb7950b2e76789a57da5dd589c5cfb795b77d5f7a07a3671c4c2dfb08f5df5'
             '50d3f5fdd72e659380fb43adc0286d4c78784f314854b2079e2a8c86df326542e00ffd62f65a8e64393f244a378787cc6c93fec50decff217e8640e22815b543'
+            SKIP
             SKIP)
 
 _pick() {

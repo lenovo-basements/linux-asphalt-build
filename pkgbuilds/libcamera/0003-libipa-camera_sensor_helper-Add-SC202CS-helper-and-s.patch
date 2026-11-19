@@ -17,10 +17,6 @@ phase means of 65.05 to 65.07.
 Assisted-by: LLM
 Signed-off-by: lolipuru <banstellazz@gmail.com>
 ---
- src/ipa/libipa/camera_sensor_helper.cpp          | 16 ++++++++++++++++
- .../sensor/camera_sensor_properties.cpp          |  5 +++++
- 2 files changed, 21 insertions(+)
-
 diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
 index f77ef38..86a0798 100644
 --- a/src/ipa/libipa/camera_sensor_helper.cpp
@@ -49,12 +45,12 @@ index f77ef38..86a0798 100644
  {
  public:
 diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
-index 3dceea5..5fc6b3a 100644
+index 09f1c97..3bbf769 100644
 --- a/src/libcamera/sensor/camera_sensor_properties.cpp
 +++ b/src/libcamera/sensor/camera_sensor_properties.cpp
-@@ -528,6 +528,11 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+@@ -538,6 +538,16 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
  			},
- 			.sensorDelays = { },
  		} },
 +		{ "sc202cs", {
 +			.unitCellSize = { 1750, 1750 },
@@ -71,4 +67,3 @@ index 3dceea5..5fc6b3a 100644
  			.testPatternModes = {
 -- 
 2.56.0
-
