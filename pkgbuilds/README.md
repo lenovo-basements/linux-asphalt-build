@@ -18,6 +18,7 @@ system `pacman -U out/*.pkg.tar.*` updates them.
 | `hypr-osk-popup` | Hyprland plugin: GTK4 popovers (rename, search) survive the on-screen keyboard | this repo |
 | `libcamera` | Arch's libcamera + sensor helpers (below) | Arch PKGBUILD + patches |
 | `asphalt-slot` | **opt-in**: switch the A/B slot from Linux (power menu "To Android") | this repo |
+| `asphalt-face` | **opt-in**: 2D face unlock for the asphalt-shell lock screen (`asphalt-face enroll`); a photo can fool it | this repo + opencv_zoo models (hyprland (or with greeter) only)|
 
 Build them all on aarch64 Arch Linux ARM (the tablet, or a clean ALARM chroot) as root:
 

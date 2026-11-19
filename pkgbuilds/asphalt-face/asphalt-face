@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""asphalt-face: 2D face unlock for the asphalt lock screen (opt-in).
+
+    asphalt-face enroll       look at the front camera for a few seconds
+    asphalt-face enroll --add add samples (another angle, light, how you hold it)
+    asphalt-face check        exit 0 if the enrolled face is seen (PAM: pam_exec)
+    asphalt-face status       enrolled or not (exit 0 / 1)
+    asphalt-face forget       delete the enrolled face
+
+A convenience, not a security feature: a 2D camera can be fooled by a photo.
+Only the asphalt lock screen uses it (its own PAM file); the greeter, sudo,
+polkit and other desktops never do.
+
+Frames come from the front camera's PipeWire node (wireplumber already owns
+libcamera; a second libcamera client leaves it with EBUSY). YuNet finds the
+face, SFace turns it into a 128-d embedding, and a match needs several of
+the last few detected faces close to an enrolled embedding. Every check
+appends one line of stats to ~/.local/state/asphalt-face/attempts.log.
+"""
+import json
+import os
+from pathlib import Path
+import pwd
+import subprocess
+import sys
+import time
+
+MODELS = Path(os.environ.get("ASPHALT_FACE_MODELS", "/usr/share/asphalt-face"))
+DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "asphalt-face"
+FACES = DATA / "faces.npy"
+SIZE = (640, 480)
+WARMUP_S = 0.4          # auto-exposure settles over the first frames
+MATCH = 0.5             # SFace cosine similarity (OpenCV suggests 0.363); owner ~0.75
+NEEDED, WINDOW = 3, 5   # matches among the last detected faces; no-face frames don't count
+TIMEOUT_S = 5.0
+DETECT_SCORE = 0.7      # YuNet confidence
+SAMPLES = 10            # embeddings per enrolment run
+MAX_SAMPLES = 60        # enroll --add keeps the newest
+MIN_FACE = 64           # pixels: about arm's length at 640x480
+STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "asphalt-face"
+
+# Upright first, then cv2.ROTATE_90_CLOCKWISE (0), ROTATE_90_COUNTERCLOCKWISE (2), ROTATE_180 (1).
+ROTATIONS = (None, 0, 2, 1)
+
+
+def log(message):
+    print(f"asphalt-face: {message}", file=sys.stderr, flush=True)
+
+
+def front_camera():
+    """node.name of the PipeWire camera libcamera reports as front-facing."""
+    result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
+    for item in json.loads(result.stdout or "[]"):
+        props = item.get("info", {}).get("props", {}) if isinstance(item.get("info"), dict) else {}
+        if props.get("media.class") == "Video/Source" and props.get("api.libcamera.location") == "front":
+            return props.get("node.name")
+    return None
+
+
+def open_camera():
+    import cv2
+    node = front_camera()
+    if not node:
+        raise RuntimeError("no front camera in PipeWire")
+    # target-object only takes a plain node name; reject anything else.
+    if not all(c.isalnum() or c in "._-" for c in node):
+        raise RuntimeError(f"unexpected camera node name {node!r}")
+    pipeline = (f"pipewiresrc target-object={node} ! videoconvert ! videoscale ! "
+                f"video/x-raw,format=BGR,width={SIZE[0]},height={SIZE[1]} ! "
+                "appsink drop=true max-buffers=1 sync=false")
+    capture = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+    if not capture.isOpened():
+        raise RuntimeError("front camera did not start")
+    return capture
+
+
+class Faces:
+    def __init__(self):
+        import cv2
+        self.cv2 = cv2
+        self.detector = cv2.FaceDetectorYN.create(str(MODELS / "yunet.onnx"), "", SIZE, DETECT_SCORE, 0.3, 50)
+        self.recognizer = cv2.FaceRecognizerSF.create(str(MODELS / "sface.onnx"), "")
+        self.rotation = None  # sticks once a face shows up
+
+    def rotated(self, image, rotation):
+        if rotation is None:
+            return image
+        return self.cv2.rotate(image, rotation)
+
+    def embedding(self, image):
+        """(embedding, problem): exactly one large enough face, else None."""
+        order = [self.rotation] if self.rotation is not None else list(ROTATIONS)
+        for rotation in order:
+            frame = self.rotated(image, rotation)
+            height, width = frame.shape[:2]
+            self.detector.setInputSize((width, height))
+            _, found = self.detector.detect(frame)
+            if found is None or len(found) == 0:
+                continue
+            if len(found) > 1:
+                return None, "more than one face"
+            face = found[0]
+            if min(face[2], face[3]) < MIN_FACE:
+                return None, "too far"
+            self.rotation = rotation
+            aligned = self.recognizer.alignCrop(frame, face)
+            return self.recognizer.feature(aligned).flatten(), None
+        self.rotation = None
+        return None, "no face"
+
+    def similarity(self, a, b):
+        import numpy
+        return float(numpy.dot(a, b) / (numpy.linalg.norm(a) * numpy.linalg.norm(b)))
+
+
+def frames(capture, seconds):
+    start = time.monotonic()
+    while (elapsed := time.monotonic() - start) < seconds:
+        ok, image = capture.read()
+        if ok and elapsed >= WARMUP_S:
+            yield image
+
+
+def enroll(add=False):
+    import numpy
+    capture = open_camera()
+    faces = Faces()
+    samples, last = [], 0.0
+    print("Look at the front camera; turn your head a little while it collects.", flush=True)
+    try:
+        for image in frames(capture, 20):
+            vector, problem = faces.embedding(image)
+            if vector is None:
+                continue
+            # Spread the samples over time (small pose changes), not 10 identical frames.
+            if time.monotonic() - last < 0.4:
+                continue
+            last = time.monotonic()
+            samples.append(vector)
+            print(f"  {len(samples)}/{SAMPLES}", flush=True)
+            if len(samples) == SAMPLES:
+                break
+    finally:
+        capture.release()
+    if len(samples) < SAMPLES:
+        log(f"only {len(samples)} usable frames; try again with more light, closer")
+        return 1
+    DATA.mkdir(parents=True, exist_ok=True)
+    DATA.chmod(0o700)
+    if add and FACES.is_file():
+        samples = list(numpy.load(FACES)) + samples
+    samples = samples[-MAX_SAMPLES:]
+    temporary = FACES.with_suffix(".tmp.npy")
+    numpy.save(temporary, numpy.array(samples, dtype=numpy.float32))
+    temporary.chmod(0o600)
+    temporary.replace(FACES)
+    print(f"Enrolled: {len(samples)} samples in {FACES}", flush=True)
+    return 0
+
+
+def check(timeout):
+    import numpy
+    # pam_exec runs this with a bare environment: PipeWire needs the runtime dir.
+    os.environ.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    pam_user = os.environ.get("PAM_USER")
+    if pam_user and pam_user != pwd.getpwuid(os.getuid()).pw_name:
+        log(f"refusing to check {pam_user!r} as another user")
+        return 1
+    if not FACES.is_file():
+        return 2
+    enrolled = numpy.load(FACES)
+    try:
+        capture = open_camera()
+    except RuntimeError as error:
+        log(str(error))
+        return 3
+    faces = Faces()
+    stats = {"frames": 0, "no face": 0, "too far": 0, "more than one face": 0, "faces": 0}
+    recent, best, result, start = [], -1.0, 1, time.monotonic()
+    try:
+        for image in frames(capture, timeout):
+            stats["frames"] += 1
+            vector, problem = faces.embedding(image)
+            if vector is None:
+                stats[problem] += 1
+                continue
+            stats["faces"] += 1
+            score = max(faces.similarity(vector, known) for known in enrolled)
+            best = max(best, score)
+            recent = (recent + [score >= MATCH])[-WINDOW:]
+            if sum(recent) >= NEEDED:
+                result = 0
+                break
+    finally:
+        capture.release()
+        record(stats, best, result, time.monotonic() - start)
+    if result == 0:
+        log(f"match {best:.2f}")
+    else:
+        log(f"no match (best {best:.2f})" if best >= 0 else "no face seen")
+    return result
+
+
+def record(stats, best, result, seconds):
+    """One line per check, newest last, at most 200 lines."""
+    try:
+        STATE.mkdir(parents=True, exist_ok=True)
+        path = STATE / "attempts.log"
+        line = (f"{time.strftime('%F %T')} {'match' if result == 0 else 'fail '} "
+                f"best={best:.2f} {seconds:.1f}s " + " ".join(f"{k.replace(' ', '_')}={v}" for k, v in stats.items()))
+        lines = (path.read_text().splitlines() if path.exists() else [])[-199:] + [line]
+        path.write_text("\n".join(lines) + "\n")
+    except OSError:
+        pass
+
+
+def main(argv):
+    command = argv[0] if argv else ""
+    if command == "enroll" and argv[1:] in ([], ["--add"]):
+        return enroll(add=argv[1:] == ["--add"])
+    if command == "check" and len(argv) in (1, 2):
+        return check(float(argv[1]) if len(argv) == 2 else TIMEOUT_S)
+    if command == "status" and len(argv) == 1:
+        enrolled = FACES.is_file()
+        print("enrolled" if enrolled else "not enrolled")
+        return 0 if enrolled else 1
+    if command == "forget" and len(argv) == 1:
+        FACES.unlink(missing_ok=True)
+        print("Forgot the enrolled face")
+        return 0
+    print(__doc__.split("\n\n")[1], file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

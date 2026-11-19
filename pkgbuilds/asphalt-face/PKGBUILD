@@ -1,0 +1,27 @@
+pkgname=asphalt-face
+pkgver=2
+pkgrel=1
+pkgdesc="2D face unlock for the Lenovo Legion Y700 Gen 2 (asphalt) lock screen"
+arch=(any)
+license=(GPL-2.0-or-later MIT Apache-2.0)
+depends=(python python-numpy python-opencv gst-plugin-pipewire pipewire)
+# Models from opencv_zoo, pinned to one commit: YuNet (MIT), SFace (Apache-2.0).
+_zoo=48b10fa505aeb51fbd127fc60a5c660040e823b7
+_media="https://media.githubusercontent.com/media/opencv/opencv_zoo/$_zoo/models"
+_raw="https://raw.githubusercontent.com/opencv/opencv_zoo/$_zoo/models"
+source=(asphalt-face
+        "yunet.onnx::$_media/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+        "sface.onnx::$_media/face_recognition_sface/face_recognition_sface_2021dec.onnx"
+        "LICENSE-yunet::$_raw/face_detection_yunet/LICENSE"
+        "LICENSE-sface::$_raw/face_recognition_sface/LICENSE")
+sha256sums=(SKIP
+            8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
+            0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79
+            SKIP SKIP)
+
+package() {
+  install -Dm755 asphalt-face -t "$pkgdir/usr/bin/"
+  install -Dm644 yunet.onnx sface.onnx -t "$pkgdir/usr/share/asphalt-face/"
+  install -Dm644 LICENSE-yunet "$pkgdir/usr/share/licenses/$pkgname/LICENSE-yunet-MIT"
+  install -Dm644 LICENSE-sface "$pkgdir/usr/share/licenses/$pkgname/LICENSE-sface-Apache-2.0"
+}
