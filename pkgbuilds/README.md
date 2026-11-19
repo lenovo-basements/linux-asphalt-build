@@ -14,7 +14,7 @@ system `pacman -U out/*.pkg.tar.*` updates them.
 | `hexagonrpc` | FastRPC server for the sensor DSP (+ local changes) | upstream + patch |
 | `sensh` | SSC sensor shell + `sscregistrygen` (+ local changes) | upstream + patches |
 | `qcom-va-driver` | VA-API on Iris (Brave, mpv) | radxa-pkg, pinned |
-| `hyprgrass` | Hyprland touch gestures, pinned for the dotfiles | upstream + wf-touch submodule |
+| `hyprgrass` | Hyprland touch gestures, pinned (Lua config API) | upstream + wf-touch submodule |
 | `hypr-osk-popup` | Hyprland plugin: GTK4 popovers (rename, search) survive the on-screen keyboard | this repo |
 | `libcamera` | Arch's libcamera + sensor helpers (below) | Arch PKGBUILD + patches |
 | `asphalt-slot` | **opt-in**: switch the A/B slot from Linux (power menu "To Android") | this repo |
@@ -41,8 +41,8 @@ Notes:
   mapping ships as `/usr/share/asphalt/tuned-ppd.conf`; build-rootfs copies it over.
 - **hyprgrass and hypr-osk-popup depend on the exact `hyprland` version it was built with**, so pacman refuses
   a Hyprland update until hyprgrass is rebuilt (`build-packages.sh hyprgrass`, then update
-  both together). Its `/usr/lib/hyprgrass/libhyprgrass.json` is the metadata
-  `gesture-control` checks.
+  both together). Its `/usr/lib/hyprgrass/libhyprgrass.json` records the ABI hash it was
+  built for, to compare with `hyprctl version -j` before loading it.
 - **linux-asphalt doesn't flash anything.** ABL boots the boot/vendor_boot partitions, so a
   new kernel still means flashing that build's `flash/*.img`; the package keeps the modules
   in step with it.

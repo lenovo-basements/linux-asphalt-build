@@ -33,8 +33,8 @@ Options:
   --no-gnome             Same as --desktop none (kept for old scripts)
   --no-autologin         Desktops only: no automatic login (GDM, or greetd
                          for hyprland). The console always asks for a login.
-  --greeter <script>     hyprland: run this greeter installer (e.g. the
-                         dotfiles' greeter/install-greeter) instead of autologin
+  --greeter <script>     hyprland: run this greeter installer instead of
+                         autologin (called with --root <target> --user <name>)
   --extra-packages <file>  Also install the packages listed in <file>
                          (whitespace-separated, # comments)
   --shell <path>         Login shell for the user (default: /bin/bash)

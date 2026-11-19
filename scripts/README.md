@@ -21,7 +21,6 @@ Expected layout: the repos side by side.
   linux-asphalt-build/   this repo
   asphalt-firmware/      firmware + sensor/audio configs (asphalt-firmware package)
   mainline/              kernel tree with the asphalt patches
-  dotfiles/              optional: desktop config, greeter (--greeter)
 ```
 
 ## 1. Build host
@@ -134,7 +133,7 @@ you choose. Run as root on ALARM (the chroot from step 1).
 ```sh
 sudo scripts/build-rootfs.sh --target /srv/rootfs \
     --user <name> --shell /usr/bin/fish --hostname asphalt --timezone Asia/Bangkok \
-    --desktop hyprland --greeter <work>/dotfiles/hyprland/greeter/install-greeter \
+    --desktop hyprland --greeter /path/to/greeter-installer \
     --extra-packages my-packages.txt --ssh-key ~/.ssh/id_ed25519.pub
 ```
 
@@ -144,7 +143,7 @@ sudo scripts/build-rootfs.sh --target /srv/rootfs \
 | `--user`, `--password` | Primary user (default `alarm`, password = user name). Change it on first login. |
 | `--hostname`, `--timezone` | Defaults `asphalt`, `UTC`. The PMIC RTC can't be set from Linux, so `systemd-timesyncd` is always enabled. |
 | `--desktop` | `none` (default: console login), `hyprland`, or `gnome`. |
-| `--greeter` | hyprland: run this greeter installer (the dotfiles' `install-greeter`) instead of autologin. |
+| `--greeter` | hyprland: run this greeter installer instead of autologin. It is called as `bash <script> --root <target> --user <name>` and must set up greetd in that root. |
 | `--no-autologin` | Desktops: ask for a login. |
 | `--extra-packages` | A file of extra package names (whitespace-separated, `#` comments). |
 | `--shell`, `--ssh-key` | Login shell; `--ssh-key` enables sshd, key-only, with that authorized_keys file. |

@@ -141,23 +141,35 @@ def drain_device(device):
             break
 
 
-def _run_user_unit(user, uid, unit, *cmd):
+# Desktop hooks: user units the session's config may provide. The user
+# manager runs them outside this service's ProtectHome namespace, so no
+# user-controlled program is executed as root, and none is required.
+SLEEP_UNIT = 'asphalt-button-sleep.service'
+SCREENSHOT_UNIT = 'asphalt-button-screenshot.service'
+UNIT_NOT_FOUND = 5  # systemctl's exit status for "Unit ... not found"
+
+
+def start_user_unit(user, uid, unit):
+    """Start one of the user's units; False if they have no unit by that name."""
     pw = pwd.getpwnam(user)
     runtime = f'/run/user/{uid}'
-    subprocess.run([
+    result = subprocess.run([
         'setpriv', f'--reuid={uid}', f'--regid={pw.pw_gid}', '--init-groups',
         'env', f'XDG_RUNTIME_DIR={runtime}', f'DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus',
-        'systemd-run', '--user', '--collect', f'--unit={unit}',
-        '--property=Type=exec', '/usr/bin/env', *cmd,
-    ], check=True, timeout=5)
+        'systemctl', '--user', '--no-block', 'start', unit,
+    ], text=True, capture_output=True, timeout=5)
+    if result.returncode == UNIT_NOT_FOUND:
+        return False
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, result.args,
+                                            result.stdout, result.stderr)
+    return True
 
 
 def screenshot():
-    # The user manager launches outside this service's ProtectHome namespace.
-    # No user-controlled program is executed as root.
     user, uid = active_session()
-    helper = str(Path(pwd.getpwnam(user).pw_dir) / '.config/hypr/screenshot-control')
-    _run_user_unit(user, uid, 'asphalt-button-screenshot', helper)
+    if not start_user_unit(user, uid, SCREENSHOT_UNIT):
+        print(f'power-button screenshot: {user} has no {SCREENSHOT_UNIT}', flush=True)
 
 
 def publish_held(state):
@@ -179,17 +191,19 @@ def action(name):
         try:
             user, uid = active_session(hypr_only=True)
         except KeyError:
-            pass  # Other desktops retain their existing system suspend path.
+            pass  # Other desktops use the system suspend path below.
         except (OSError, subprocess.SubprocessError) as error:
             print(f'power-button session lookup failed: {error}', file=sys.stderr, flush=True)
             return
         else:
-            helper = str(Path(pwd.getpwnam(user).pw_dir) / '.config/hypr/idle-control')
+            # The session's own sleep policy (lock first, media, screen-off),
+            # if it has one; otherwise the generic suspend below.
             try:
-                _run_user_unit(user, uid, 'asphalt-button-sleep', helper, 'button')
+                if start_user_unit(user, uid, SLEEP_UNIT):
+                    return
             except (OSError, subprocess.SubprocessError) as error:
                 print(f'power-button desktop handoff failed: {error}', file=sys.stderr, flush=True)
-            return
+                return
         # Use the shared logind/systemd path. systemctl may return before
         # suspend completes, so display restoration belongs to the sleep
         # hook and the unit ordered after systemd-suspend.service.

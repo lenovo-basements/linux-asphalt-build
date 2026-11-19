@@ -1,11 +1,11 @@
-# Touch gestures for Hyprland, at the commit the dotfiles' gestures.lua
-# targets (Lua API), with its bundled wf-touch (the code expects that
-# version's API). Plugins only work with the exact Hyprland build they were
+# Touch gestures for Hyprland, pinned at a commit with the Lua config API,
+# with its bundled wf-touch (the code expects that version's API). Plugins only work with the exact Hyprland build they were
 # compiled against, so this package depends on that exact hyprland version:
 # pacman refuses a Hyprland upgrade until hyprgrass is rebuilt (makepkg -f).
 #
-# Installs /usr/lib/hyprgrass/libhyprgrass.so plus libhyprgrass.json, the
-# same metadata install-touch-gestures wrote (gesture-control checks it).
+# Installs /usr/lib/hyprgrass/libhyprgrass.so plus libhyprgrass.json: the
+# plugin's ABI hash and the Hyprland build it targets, so a config can check
+# that a plugin matches the running Hyprland before loading it.
 pkgname=hyprgrass
 pkgver=0.8.2.r0.g8ca1af7
 pkgrel=1
@@ -30,7 +30,7 @@ prepare() {
 build() {
   arch-meson hyprgrass build -D tests=enabled
   meson compile -C build
-  # The ABI string gesture-control compares with `hyprctl version -j`'s abiHash.
+  # The ABI string a running Hyprland reports as abiHash (`hyprctl version -j`).
   # abi-hash.cpp copies Hyprland's format: stop if upstream changed it.
   grep -qF 'std::format("{}_aq_{}_hu_{}_hg_{}_hc_{}_hlg_{}", GIT_COMMIT_HASH, stripPatch(AQUAMARINE_VERSION)' \
     /usr/include/hyprland/src/plugins/PluginAPI.hpp ||
