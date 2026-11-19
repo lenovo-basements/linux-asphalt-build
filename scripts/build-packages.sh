@@ -18,7 +18,7 @@ WORK="${WORK:-/var/tmp/asphalt-pkgbuild}"
 OUT="$REPO_DIR/pkgbuilds/out"
 KERNEL_BUILD=""
 
-ORDER=(qrtr pd-mapper hexagonrpc sensh qcom-va-driver hyprgrass libcamera
+ORDER=(qrtr pd-mapper hexagonrpc sensh qcom-va-driver hyprgrass hypr-osk-popup libcamera
        asphalt-firmware asphalt-device-support linux-asphalt asphalt-slot)
 # Never in the image or a default build: install by hand from out/opt-in/.
 OPTIN=(asphalt-slot)

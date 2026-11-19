@@ -15,6 +15,7 @@ system `pacman -U out/*.pkg.tar.*` updates them.
 | `sensh` | SSC sensor shell + `sscregistrygen` (+ local changes) | upstream + patches |
 | `qcom-va-driver` | VA-API on Iris (Brave, mpv) | radxa-pkg, pinned |
 | `hyprgrass` | Hyprland touch gestures, pinned for the dotfiles | upstream + wf-touch submodule |
+| `hypr-osk-popup` | Hyprland plugin: GTK4 popovers (rename, search) survive the on-screen keyboard | this repo |
 | `libcamera` | Arch's libcamera + sensor helpers (below) | Arch PKGBUILD + patches |
 | `asphalt-slot` | **opt-in**: switch the A/B slot from Linux (power menu "To Android") | this repo |
 
@@ -38,7 +39,7 @@ Notes:
   `systemctl preset ...` line the package prints.
 - **tuned-ppd** only reads `/etc/tuned/ppd.conf`, which belongs to `tuned-ppd`: the asphalt
   mapping ships as `/usr/share/asphalt/tuned-ppd.conf`; build-rootfs copies it over.
-- **hyprgrass depends on the exact `hyprland` version it was built with**, so pacman refuses
+- **hyprgrass and hypr-osk-popup depend on the exact `hyprland` version it was built with**, so pacman refuses
   a Hyprland update until hyprgrass is rebuilt (`build-packages.sh hyprgrass`, then update
   both together). Its `/usr/lib/hyprgrass/libhyprgrass.json` is the metadata
   `gesture-control` checks.

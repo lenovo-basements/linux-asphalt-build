@@ -1,0 +1,83 @@
+// Keep xdg_popup grabs (GTK4 popovers: rename, new folder, search) alive
+// while the on-screen keyboard is shown and tapped.
+//
+// Hyprland drops a seat grab whenever a refocus lands on a surface the grab
+// doesn't accept (CInputManager::mouseMoveUnified, see its FIXME: popup grabs
+// should be keyboard-only). The OSK is a separate layer surface, and two
+// refocuses hit that check: the one when the OSK maps (a popover's entry took
+// focus, so the OSK appears) and the one on every key tap. Either closes the
+// popover, and the keystroke (sent via ydotool) goes nowhere.
+//
+// So the OSK joins the active grab: when its layer opens (before the map
+// refocus) and on every touch or button press (before that refocus). A press
+// anywhere else still dismisses the popup as usual.
+#include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/desktop/state/LayerState.hpp>
+#include <hyprland/src/desktop/view/LayerSurface.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
+
+#include <stdexcept>
+#include <string>
+
+namespace {
+    CHyprSignalListener g_touchDown, g_mouseButton, g_layerOpened;
+
+    // "osk" is the layer namespace on-screen keyboards use (squeekboard's);
+    // give a custom keyboard the same namespace to be covered.
+    bool isOsk(const PHLLS& ls) {
+        return ls && ls->m_namespace == "osk";
+    }
+
+    // The root and any subsurfaces: the hit test returns the exact surface
+    // under the finger. Not gated on mapped(): the layer is still mapping
+    // when it opens.
+    void joinGrab(const PHLLS& ls) {
+        const auto& grab = g_pSeatManager->m_seatGrab;
+        const auto  root = ls->resource();
+        if (!grab || !root)
+            return;
+        root->breadthfirst(
+            [&grab](SP<CWLSurfaceResource> surface, const Vector2D&, void*) {
+                if (surface && !grab->accepts(surface))
+                    grab->add(surface);
+            },
+            nullptr);
+    }
+
+    void joinGrabAll() {
+        if (!g_pSeatManager->m_seatGrab)
+            return;
+        for (const auto& ls : Desktop::layerState()->layers()) {
+            if (isOsk(ls))
+                joinGrab(ls);
+        }
+    }
+}
+
+APICALL EXPORT std::string PLUGIN_API_VERSION() {
+    return HYPRLAND_API_VERSION;
+}
+
+APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+    if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash()) {
+        HyprlandAPI::addNotification(handle, "[osk-popup] built for a different Hyprland; not loaded",
+                                     CHyprColor{1.0, 0.2, 0.2, 1.0}, 8000);
+        throw std::runtime_error("osk-popup: Hyprland version mismatch");
+    }
+    auto& events  = Event::bus()->m_events;
+    g_layerOpened = events.layer.opened.listen([](const auto& ls) {
+        if (isOsk(ls))
+            joinGrab(ls);
+    });
+    g_touchDown   = events.input.touch.down.listen([](const auto&, auto&) { joinGrabAll(); });
+    g_mouseButton = events.input.mouse.button.listen([](const auto&, auto&) { joinGrabAll(); });
+    return {"osk-popup", "Keep popups open while the on-screen keyboard is used", "asphalt", "1"};
+}
+
+APICALL EXPORT void PLUGIN_EXIT() {
+    g_layerOpened.reset();
+    g_touchDown.reset();
+    g_mouseButton.reset();
+}
