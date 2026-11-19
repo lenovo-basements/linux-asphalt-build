@@ -1,0 +1,515 @@
+From 665da045661747691c8fd230dcbc706181a72e1c Mon Sep 17 00:00:00 2001
+From: lolipuru <banstellazz@gmail.com>
+Date: Fri, 20 Nov 2026 04:50:26 +0700
+Subject: [PATCH] softisp: Add an edge-aware denoise pass
+
+When the IPA asks for it, the GPU debayer renders into an intermediate
+RGBA texture and a second program filters that into the output: a 5x5
+bilateral on luma (tight range, keeps edges) and a 5x5 bilateral at a
+2-pixel stride on chroma, weighted by luma similarity so colour noise
+averages out without bleeding across edges. The filtered luma and chroma
+are recombined.
+
+A Denoise IPA algorithm sets the luma and chroma range tolerances from
+piecewise-linear tables over analogue gain in the tuning file. Both zero
+skips the second pass, so frames in good light take the old single-pass
+path. Without the denoise program (shader failure) frames also go
+straight to the output.
+
+On the S5K4H7 front camera at 16x gain: luma noise -61%, chroma noise
+-77%, 95% of edge strength kept.
+
+Assisted-by: LLM
+Signed-off-by: lolipuru <banstellazz@gmail.com>
+---
+ .../internal/software_isp/debayer_params.h    |   7 +
+ src/ipa/simple/algorithms/denoise.cpp         |  83 +++++++++++
+ src/ipa/simple/algorithms/denoise.h           |  39 +++++
+ src/ipa/simple/algorithms/meson.build         |   1 +
+ src/libcamera/shaders/denoise.frag            |  69 +++++++++
+ src/libcamera/shaders/denoise.vert            |  15 ++
+ src/libcamera/shaders/meson.build             |   2 +
+ src/libcamera/software_isp/debayer_egl.cpp    | 133 +++++++++++++++++-
+ src/libcamera/software_isp/debayer_egl.h      |  19 +++
+ 9 files changed, 366 insertions(+), 2 deletions(-)
+ create mode 100644 src/ipa/simple/algorithms/denoise.cpp
+ create mode 100644 src/ipa/simple/algorithms/denoise.h
+ create mode 100644 src/libcamera/shaders/denoise.frag
+ create mode 100644 src/libcamera/shaders/denoise.vert
+
+diff --git a/include/libcamera/internal/software_isp/debayer_params.h b/include/libcamera/internal/software_isp/debayer_params.h
+index 86392f0..8433944 100644
+--- a/include/libcamera/internal/software_isp/debayer_params.h
++++ b/include/libcamera/internal/software_isp/debayer_params.h
+@@ -40,6 +40,13 @@ struct DebayerParams {
+ 	std::array<uint8_t, kLscWidth * kLscHeight * 4> lscMesh = {};
+ 	float lscRange = 0.0;
+ 	uint32_t lscRevision = 0;
++
++	/*
++	 * Denoise (second GPU pass): range tolerances in gamma-encoded units
++	 * for luma and chroma. Both 0 skips the pass.
++	 */
++	float denoiseLuma = 0.0;
++	float denoiseChroma = 0.0;
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/src/ipa/simple/algorithms/denoise.cpp b/src/ipa/simple/algorithms/denoise.cpp
+new file mode 100644
+index 0000000..eb9b091
+--- /dev/null
++++ b/src/ipa/simple/algorithms/denoise.cpp
+@@ -0,0 +1,83 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Denoise strength
++ *
++ * Tuning (per sensor), strengths piecewise linear in analogue gain:
++ *
++ *   - Denoise:
++ *       gain:   [ 1.0, 4.0, 16.0 ]
++ *       luma:   [ 0.0, 0.015, 0.04 ]
++ *       chroma: [ 0.0, 0.05, 0.12 ]
++ *
++ * luma / chroma are the denoise pass's range tolerances in gamma-encoded
++ * units (see denoise.frag). 0 for both skips the pass, so good light costs
++ * nothing.
++ */
++
++#include "denoise.h"
++
++#include <algorithm>
++
++#include <libcamera/base/log.h>
++
++namespace libcamera {
++
++namespace ipa::soft::algorithms {
++
++LOG_DEFINE_CATEGORY(IPASoftDenoise)
++
++static int readList(const ValueNode &node, std::vector<float> &out)
++{
++	if (!node.isList())
++		return -EINVAL;
++	for (const auto &value : node.asList()) {
++		const auto v = value.get<float>();
++		if (!v)
++			return -EINVAL;
++		out.push_back(*v);
++	}
++	return 0;
++}
++
++int Denoise::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
++{
++	if (readList(tuningData["gain"], gains_) || readList(tuningData["luma"], luma_) ||
++	    readList(tuningData["chroma"], chroma_) || gains_.empty() ||
++	    luma_.size() != gains_.size() || chroma_.size() != gains_.size() ||
++	    !std::is_sorted(gains_.begin(), gains_.end())) {
++		LOG(IPASoftDenoise, Error)
++			<< "Denoise needs 'gain', 'luma' and 'chroma' lists of the same"
++			<< " length, gain ascending";
++		return -EINVAL;
++	}
++	return 0;
++}
++
++float Denoise::lookup(const std::vector<float> &gains,
++		      const std::vector<float> &values, float gain)
++{
++	if (gain <= gains.front())
++		return values.front();
++	if (gain >= gains.back())
++		return values.back();
++	auto it = std::upper_bound(gains.begin(), gains.end(), gain);
++	const size_t i = it - gains.begin();
++	const float t = (gain - gains[i - 1]) / (gains[i] - gains[i - 1]);
++	return values[i - 1] + t * (values[i] - values[i - 1]);
++}
++
++void Denoise::prepare(IPAContext &context, [[maybe_unused]] const uint32_t frame,
++		      [[maybe_unused]] IPAFrameContext &frameContext,
++		      DebayerParams *params)
++{
++	const float gain = context.activeState.agc.again;
++
++	params->denoiseLuma = std::max(0.0f, lookup(gains_, luma_, gain));
++	params->denoiseChroma = std::max(0.0f, lookup(gains_, chroma_, gain));
++}
++
++REGISTER_IPA_ALGORITHM(Denoise, "Denoise")
++
++} /* namespace ipa::soft::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/simple/algorithms/denoise.h b/src/ipa/simple/algorithms/denoise.h
+new file mode 100644
+index 0000000..6454055
+--- /dev/null
++++ b/src/ipa/simple/algorithms/denoise.h
+@@ -0,0 +1,39 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Denoise strength
++ */
++
++#pragma once
++
++#include <vector>
++
++#include "algorithm.h"
++
++namespace libcamera {
++
++namespace ipa::soft::algorithms {
++
++class Denoise : public Algorithm
++{
++public:
++	Denoise() = default;
++	~Denoise() = default;
++
++	int init(IPAContext &context, const ValueNode &tuningData) override;
++	void prepare(IPAContext &context,
++		     const uint32_t frame,
++		     IPAFrameContext &frameContext,
++		     DebayerParams *params) override;
++
++private:
++	static float lookup(const std::vector<float> &gains,
++			    const std::vector<float> &values, float gain);
++
++	std::vector<float> gains_;
++	std::vector<float> luma_;
++	std::vector<float> chroma_;
++};
++
++} /* namespace ipa::soft::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/simple/algorithms/meson.build b/src/ipa/simple/algorithms/meson.build
+index c9f6e55..daaf5f3 100644
+--- a/src/ipa/simple/algorithms/meson.build
++++ b/src/ipa/simple/algorithms/meson.build
+@@ -6,5 +6,6 @@ soft_simple_ipa_algorithms = files([
+     'agc.cpp',
+     'blc.cpp',
+     'ccm.cpp',
++    'denoise.cpp',
+     'lsc.cpp',
+ ])
+diff --git a/src/libcamera/shaders/denoise.frag b/src/libcamera/shaders/denoise.frag
+new file mode 100644
+index 0000000..d04ccd9
+--- /dev/null
++++ b/src/libcamera/shaders/denoise.frag
+@@ -0,0 +1,69 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * denoise.frag - Edge-aware denoise of the debayered, gamma-encoded frame
++ *
++ * Luma: a 5x5 bilateral, tight in range, so fine grain goes and edges stay.
++ * Chroma: a 5x5 bilateral at a 2-pixel stride (9x9 reach) weighted by luma
++ * similarity, so colour blotches average out without bleeding across edges.
++ * The result keeps the filtered luma and the filtered chroma.
++ *
++ * lumaSigma / chromaSigma are range tolerances in gamma-encoded units
++ * (0 disables that part); the IPA raises them with sensor gain.
++ */
++
++#ifdef GL_ES
++precision highp float;
++#endif
++
++uniform sampler2D tex;
++uniform vec2 texel;
++uniform float lumaSigma;
++uniform float chromaSigma;
++
++varying vec2 textureOut;
++
++float luma(vec3 c)
++{
++	/* Symmetric in R and B, so it holds for both output orders. */
++	return dot(c, vec3(0.25, 0.5, 0.25));
++}
++
++void main(void)
++{
++	vec3 c0 = texture2D(tex, textureOut).rgb;
++	float y0 = luma(c0);
++
++	float lumaInv = lumaSigma > 0.0 ? 0.5 / (lumaSigma * lumaSigma) : 0.0;
++	float chromaInv = chromaSigma > 0.0 ? 0.5 / (chromaSigma * chromaSigma) : 0.0;
++
++	vec3 sumL = vec3(0.0);
++	float wL = 0.0;
++	vec3 sumC = vec3(0.0);
++	float wC = 0.0;
++
++	for (int j = -2; j <= 2; j++) {
++		for (int i = -2; i <= 2; i++) {
++			vec2 o = vec2(float(i), float(j));
++			float spatial = dot(o, o) / 4.5;
++
++			vec3 s = texture2D(tex, textureOut + o * texel).rgb;
++			float d = luma(s) - y0;
++			float w = exp(-spatial - d * d * lumaInv);
++			sumL += s * w;
++			wL += w;
++
++			vec3 s2 = texture2D(tex, textureOut + 2.0 * o * texel).rgb;
++			float d2 = luma(s2) - y0;
++			float w2 = exp(-spatial - d2 * d2 * chromaInv);
++			sumC += s2 * w2;
++			wC += w2;
++		}
++	}
++
++	vec3 lumaPart = lumaSigma > 0.0 ? sumL / wL : c0;
++	vec3 chromaPart = chromaSigma > 0.0 ? sumC / wC : c0;
++
++	float y = luma(lumaPart);
++	vec3 chroma = chromaPart - vec3(luma(chromaPart));
++	gl_FragColor = vec4(clamp(vec3(y) + chroma, 0.0, 1.0), 1.0);
++}
+diff --git a/src/libcamera/shaders/denoise.vert b/src/libcamera/shaders/denoise.vert
+new file mode 100644
+index 0000000..b285db2
+--- /dev/null
++++ b/src/libcamera/shaders/denoise.vert
+@@ -0,0 +1,15 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/*
++ * denoise.vert - Full-frame pass for the denoise stage
++ */
++
++attribute vec4 vertexIn;
++attribute vec2 textureIn;
++
++varying vec2 textureOut;
++
++void main(void)
++{
++	gl_Position = vertexIn;
++	textureOut = textureIn;
++}
+diff --git a/src/libcamera/shaders/meson.build b/src/libcamera/shaders/meson.build
+index c409ff9..5065c6e 100644
+--- a/src/libcamera/shaders/meson.build
++++ b/src/libcamera/shaders/meson.build
+@@ -6,6 +6,8 @@ shader_files = files([
+     'bayer_1x_packed.frag',
+     'bayer_unpacked.frag',
+     'bayer_unpacked.vert',
++    'denoise.frag',
++    'denoise.vert',
+     'identity.vert',
+ ])
+ 
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index db50089..a6aa3d1 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -283,7 +283,113 @@ int DebayerEGL::initBayerShaders(PixelFormat inputFormat, PixelFormat outputForm
+ 		return -ENODEV;
+ 	}
+ 
+-	return getShaderVariableLocations();
++	int ret = getShaderVariableLocations();
++	if (ret)
++		return ret;
++
++	/* Optional: without it frames go straight to the output as before. */
++	if (initDenoiseShader())
++		LOG(Debayer, Warning) << "Denoise pass unavailable";
++	egl_.useProgram(programId_);
++
++	return 0;
++}
++
++int DebayerEGL::initDenoiseShader()
++{
++	std::vector<std::string> shaderEnv;
++	GLuint vertexShaderId = 0;
++	GLuint fragmentShaderId = 0;
++
++	egl_.pushEnv(shaderEnv, "#version 100");
++
++	if (egl_.compileVertexShader(vertexShaderId, denoise_vert, shaderEnv))
++		return -ENODEV;
++	utils::scope_exit vShaderGuard([&] { glDeleteShader(vertexShaderId); });
++
++	if (egl_.compileFragmentShader(fragmentShaderId, denoise_frag, shaderEnv))
++		return -ENODEV;
++	utils::scope_exit fShaderGuard([&] { glDeleteShader(fragmentShaderId); });
++
++	if (egl_.linkProgram(denoiseProgramId_, vertexShaderId, fragmentShaderId)) {
++		denoiseProgramId_ = 0;
++		return -ENODEV;
++	}
++
++	denoiseVertex_ = glGetAttribLocation(denoiseProgramId_, "vertexIn");
++	denoiseTextureIn_ = glGetAttribLocation(denoiseProgramId_, "textureIn");
++	denoiseTex_ = glGetUniformLocation(denoiseProgramId_, "tex");
++	denoiseTexel_ = glGetUniformLocation(denoiseProgramId_, "texel");
++	denoiseLuma_ = glGetUniformLocation(denoiseProgramId_, "lumaSigma");
++	denoiseChroma_ = glGetUniformLocation(denoiseProgramId_, "chromaSigma");
++
++	return 0;
++}
++
++int DebayerEGL::prepareDenoiseTarget()
++{
++	if (denoiseTexture_ && denoiseWidth_ == width_ && denoiseHeight_ == height_)
++		return 0;
++
++	if (!denoiseTexture_)
++		glGenTextures(1, &denoiseTexture_);
++	if (!denoiseFbo_)
++		glGenFramebuffers(1, &denoiseFbo_);
++
++	glActiveTexture(GL_TEXTURE3);
++	glBindTexture(GL_TEXTURE_2D, denoiseTexture_);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width_, height_, 0, GL_RGBA,
++		     GL_UNSIGNED_BYTE, nullptr);
++	glActiveTexture(GL_TEXTURE0);
++
++	glBindFramebuffer(GL_FRAMEBUFFER, denoiseFbo_);
++	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++			       denoiseTexture_, 0);
++	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
++		LOG(Debayer, Error) << "Denoise target incomplete";
++		denoiseWidth_ = denoiseHeight_ = 0;
++		return -ENODEV;
++	}
++
++	denoiseWidth_ = width_;
++	denoiseHeight_ = height_;
++	LOG(Debayer, Debug) << "Denoise target " << width_ << "x" << height_;
++	return 0;
++}
++
++void DebayerEGL::drawDenoise(const DebayerParams &params)
++{
++	static const GLfloat vcoordinates[4][2] = {
++		{ -1.0f, -1.0f }, { -1.0f, +1.0f }, { +1.0f, +1.0f }, { +1.0f, -1.0f },
++	};
++	static const GLfloat tcoordinates[4][2] = {
++		{ 0.0f, 0.0f }, { 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f },
++	};
++
++	egl_.useProgram(denoiseProgramId_);
++
++	glEnableVertexAttribArray(denoiseVertex_);
++	glVertexAttribPointer(denoiseVertex_, 2, GL_FLOAT, GL_TRUE,
++			      2 * sizeof(GLfloat), vcoordinates);
++	glEnableVertexAttribArray(denoiseTextureIn_);
++	glVertexAttribPointer(denoiseTextureIn_, 2, GL_FLOAT, GL_TRUE,
++			      2 * sizeof(GLfloat), tcoordinates);
++
++	glActiveTexture(GL_TEXTURE3);
++	glBindTexture(GL_TEXTURE_2D, denoiseTexture_);
++	glActiveTexture(GL_TEXTURE0);
++
++	glUniform1i(denoiseTex_, 3);
++	glUniform2f(denoiseTexel_, 1.0f / width_, 1.0f / height_);
++	glUniform1f(denoiseLuma_, params.denoiseLuma);
++	glUniform1f(denoiseChroma_, params.denoiseChroma);
++
++	glViewport(0, 0, width_, height_);
++	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);
+ }
+ 
+ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+@@ -637,13 +743,27 @@ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const Debaye
+ 	if (!eglImageOut)
+ 		return -ENOMEM;
+ 
+-	egl_.attachTextureToFBO(*eglImageOut);
++	/* With denoise, the debayer draws into the intermediate target first. */
++	const bool denoise = denoiseProgramId_ &&
++			     (params.denoiseLuma > 0.0f || params.denoiseChroma > 0.0f) &&
++			     prepareDenoiseTarget() == 0;
++
++	egl_.useProgram(programId_);
++	if (denoise)
++		glBindFramebuffer(GL_FRAMEBUFFER, denoiseFbo_);
++	else
++		egl_.attachTextureToFBO(*eglImageOut);
+ 	setShaderVariableValues(*eglImageIn, params);
+ 
+ 	glViewport(0, 0, width_, height_);
+ 	glClear(GL_COLOR_BUFFER_BIT);
+ 	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);
+ 
++	if (denoise) {
++		egl_.attachTextureToFBO(*eglImageOut);
++		drawDenoise(params);
++	}
++
+ 	GLenum err = glGetError();
+ 	if (err != GL_NO_ERROR) {
+ 		LOG(eGL, Error) << "Drawing scene fail " << err;
+@@ -737,6 +857,15 @@ void DebayerEGL::stop()
+ 	lscTexture_ = 0;
+ 	lscRevision_ = 0;
+ 
++	if (denoiseTexture_)
++		glDeleteTextures(1, &denoiseTexture_);
++	if (denoiseFbo_)
++		glDeleteFramebuffers(1, &denoiseFbo_);
++	if (denoiseProgramId_)
++		glDeleteProgram(denoiseProgramId_);
++	denoiseTexture_ = denoiseFbo_ = denoiseProgramId_ = 0;
++	denoiseWidth_ = denoiseHeight_ = 0;
++
+ 	if (programId_)
+ 		glDeleteProgram(programId_);
+ }
+diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
+index 89bb426..7574bdc 100644
+--- a/src/libcamera/software_isp/debayer_egl.h
++++ b/src/libcamera/software_isp/debayer_egl.h
+@@ -66,6 +66,9 @@ private:
+ 	static int getOutputConfig(PixelFormat outputFormat, DebayerOutputConfig &config);
+ 	int initBayerShaders(PixelFormat inputFormat, PixelFormat outputFormat);
+ 	int getShaderVariableLocations();
++	int initDenoiseShader();
++	int prepareDenoiseTarget();
++	void drawDenoise(const DebayerParams &params);
+ 	void setShaderVariableValues(eGLImage &eGLImageIn, const DebayerParams &params);
+ 	int debayerGPU(FrameBuffer *input, FrameBuffer *output, const DebayerParams &params, std::optional<MappedFrameBuffer> *mappedInputBuffer, std::optional<DmaSyncer> *inputBufferDmaSyncer);
+ 
+@@ -117,6 +120,22 @@ private:
+ 	GLuint lscTexture_ = 0;
+ 	uint32_t lscRevision_ = 0;
+ 
++	/*
++	 * Denoise: when enabled, the debayer renders into an intermediate RGBA
++	 * texture (unit 3) and a second program filters it into the output.
++	 */
++	GLuint denoiseProgramId_ = 0;
++	GLuint denoiseFbo_ = 0;
++	GLuint denoiseTexture_ = 0;
++	uint32_t denoiseWidth_ = 0;
++	uint32_t denoiseHeight_ = 0;
++	GLint denoiseVertex_ = -1;
++	GLint denoiseTextureIn_ = -1;
++	GLint denoiseTex_ = -1;
++	GLint denoiseTexel_ = -1;
++	GLint denoiseLuma_ = -1;
++	GLint denoiseChroma_ = -1;
++
+ 	Size nativeOutputSize_;
+ 	Rectangle window_;
+ 	std::unique_ptr<SwStatsCpu> stats_;
+-- 
+2.56.1
+

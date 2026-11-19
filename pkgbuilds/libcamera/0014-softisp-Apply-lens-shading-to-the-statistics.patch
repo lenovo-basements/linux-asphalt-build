@@ -1,0 +1,257 @@
+From 5d6c434b44466cadc7c62fae2d2508d984df481c Mon Sep 17 00:00:00 2001
+From: lolipuru <banstellazz@gmail.com>
+Date: Fri, 20 Nov 2026 05:15:35 +0700
+Subject: [PATCH] softisp: Apply lens shading to the statistics
+
+The software ISP statistics are taken on the raw frame, before the shader
+applies lens shading. With strong shading meshes AGC then judges a frame
+much darker at the edges than the one it outputs and overexposes, and AWB
+sees the uncorrected colour falloff.
+
+Pass the debayer's LSC mesh and black level to SwStatsCpu. For the 10-bit
+packed Bayer formats, precompute per processed line the R/G/B gain of
+every sample position (8.8 fixed point) and scale each sample's signal
+above black by it, clipping at the sensor maximum, before it enters the
+sums and the luminance histogram. Scaling the black pedestal as well would
+add a near-constant offset to every channel in dark scenes: on a night
+frame that took the grey-world red gain from 2.18 to 1.33 (a green cast)
+and doubled the luminance AGC saw. AWB tiles get the same treatment with
+the tile-centre gain, after clipping was judged on the raw values. Other
+formats, and frames without LSC, are unchanged.
+
+With LSC on, in a bright scene: SC202CS clipped pixels 12.8% -> 5.5%;
+OV13B10 4.0% -> 0%. On the night frame the grey-world gains stay at
+2.16/1.06 (raw 2.18/1.02).
+
+Assisted-by: LLM
+Signed-off-by: lolipuru <banstellazz@gmail.com>
+---
+ .../internal/software_isp/swstats_cpu.h       |  24 ++++
+ src/libcamera/software_isp/debayer_egl.cpp    |   1 +
+ src/libcamera/software_isp/swstats_cpu.cpp    | 112 +++++++++++++++++-
+ 3 files changed, 136 insertions(+), 1 deletion(-)
+
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index e6afa65..8fba2af 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -11,6 +11,7 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <stdint.h>
+ #include <vector>
+ 
+@@ -22,6 +23,7 @@
+ #include "libcamera/internal/bayer_format.h"
+ #include "libcamera/internal/shared_mem_object.h"
+ #include "libcamera/internal/software_isp/swisp_stats.h"
++#include "libcamera/internal/software_isp/debayer_params.h"
+ 
+ #include "benchmark.h"
+ 
+@@ -54,6 +56,7 @@ public:
+ 
+ 	int configure(const StreamConfiguration &inputCfg, unsigned int statsBufferCount = 1);
+ 	void setWindow(const Rectangle &window);
++	void setLsc(const DebayerParams &params, const Size &frameSize);
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input,
+@@ -124,6 +127,27 @@ private:
+ 	unsigned int stride_;
+ 	unsigned int sumShift_;
+ 
++	/*
++	 * Lens shading applied to the statistics, so AGC and AWB judge the frame
++	 * the shader will output rather than the vignetted raw one. Only for the
++	 * 10-bit packed Bayer line functions; gains per sample of the current line
++	 * in 8.8 fixed point.
++	 */
++	void prepareLscLine(unsigned int y);
++	float lscGainAt(unsigned int channel, float u, float v) const;
++	bool lscActive_ = false;
++	/* Black level per channel in 8-bit sample units: gains apply above it. */
++	std::array<unsigned int, 3> lscBlack_ = {};
++	uint32_t lscRevision_ = 0;
++	Size lscFrameSize_;
++	std::array<std::array<float, DebayerParams::kLscWidth * DebayerParams::kLscHeight>, 3> lscGains_;
++	std::vector<uint16_t> lscLineR_;
++	std::vector<uint16_t> lscLineG_;
++	std::vector<uint16_t> lscLineB_;
++	const uint16_t *lscR_ = nullptr;
++	const uint16_t *lscG_ = nullptr;
++	const uint16_t *lscB_ = nullptr;
++
+ 	std::vector<SwIspStats> stats_;
+ 	SharedMemObject<SwIspStats> sharedStats_;
+ 	Benchmark bench_;
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 90334c2..bef2a6f 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -816,6 +816,7 @@ void DebayerEGL::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 		}
+ 		const bool focus = params.measureFocus &&
+ 				   inputPixelFormat_ == formats::SBGGR10_CSI2P;
++		stats_->setLsc(params, Size(width_, height_));
+ 		stats_->processFrame(frame, 0, inMapped.value(), Size(width_, height_),
+ 				     params.tiledAwb, focus);
+ 	}
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 0125afe..deac245 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -12,6 +12,7 @@
+ #include "libcamera/internal/software_isp/swstats_cpu.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ 
+ #include <libcamera/base/log.h>
+ 
+@@ -179,9 +180,35 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+                                           \
+ 	uint64_t sumR = 0;                \
+ 	uint64_t sumG = 0;                \
+-	uint64_t sumB = 0;
++	uint64_t sumB = 0;                \
++	unsigned int lscIndex = 0;
++
++/*
++ * With lens shading active (10-bit packed only), scale each sample's signal
++ * above black by its mesh gain and clip at the sensor maximum, as the shader
++ * does (it subtracts black before applying the mesh). Scaling the black
++ * pedestal too would add a near-constant offset to every channel in dark
++ * scenes, pulling AWB ratios towards 1 and fooling AGC.
++ */
++static inline unsigned int lscScale(unsigned int value, unsigned int black,
++				    unsigned int gain, unsigned int maxValue)
++{
++	if (value <= black)
++		return value;
++	return std::min(black + (((value - black) * gain) >> 8), maxValue);
++}
++
++#define SWSTATS_APPLY_LSC(div)                                                         \
++	if (lscR_) {                                                                   \
++		const unsigned int maxValue = 256 * (div) - 1;                         \
++		r = lscScale(r, lscBlack_[0] * (div), lscR_[lscIndex], maxValue);      \
++		g = lscScale(g, lscBlack_[1] * (div), lscG_[lscIndex], maxValue);      \
++		b = lscScale(b, lscBlack_[2] * (div), lscB_[lscIndex], maxValue);      \
++		lscIndex++;                                                            \
++	}
+ 
+ #define SWSTATS_ACCUMULATE_LINE_STATS(div) \
++	SWSTATS_APPLY_LSC(div)             \
+ 	sumR += r;                         \
+ 	sumG += g;                         \
+ 	sumB += b;                         \
+@@ -593,6 +620,8 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+ 		/* linePointers[0] is not used by any stats0_ functions */
+ 		linePointers[1] = src;
+ 		linePointers[2] = src + stride_;
++		if (lscActive_)
++			prepareLscLine(window_.y + y + 1);
+ 		(this->*stats0_)(linePointers, stats_[0]);
+ 		src += stride_ * 2;
+ 	}
+@@ -636,6 +665,20 @@ void SwStatsCpu::processAwbTiles(const MappedFrameBuffer &in, Size size)
+ 					++tile.count;
+ 				}
+ 			}
++			if (lscActive_ && lscFrameSize_.width > 1 && lscFrameSize_.height > 1) {
++				/* Tile-centre gain; clipping was judged on the raw values. */
++				const float u = std::min(1.0f, (tx + 0.5f) * tileSize / (lscFrameSize_.width - 1));
++				const float v = std::min(1.0f, (ty + 0.5f) * tileSize / (lscFrameSize_.height - 1));
++				/* Scale the signal above black only (see lscScale). */
++				auto scale = [&](uint32_t sum, unsigned int c) {
++					const float black = static_cast<float>(lscBlack_[c]) * tile.count;
++					return sum <= black ? sum
++							    : static_cast<uint32_t>(black + (sum - black) * lscGainAt(c, u, v));
++				};
++				tile.red = scale(tile.red, 0);
++				tile.green = scale(tile.green, 1);
++				tile.blue = scale(tile.blue, 2);
++			}
+ 			sharedStats_->awbTiles[sharedStats_->awbTileCount++] = tile;
+ 		}
+ 	}
+@@ -677,6 +720,73 @@ int32_t SwStatsCpu::measureFocus(const MappedFrameBuffer &in, Size size) const
+  *
+  * This may only be called after a successful setWindow() call.
+  */
++/**
++ * \brief Apply the debayer's lens shading mesh to the statistics
++ * \param[in] params The debayer parameters of the frame
++ * \param[in] frameSize The size of the frame the mesh spans
++ *
++ * Without it (or for formats other than 10-bit packed Bayer) the statistics
++ * describe the raw frame.
++ */
++void SwStatsCpu::setLsc(const DebayerParams &params, const Size &frameSize)
++{
++	const bool supported = stats0_ == &SwStatsCpu::statsBGGR10PLine0 ||
++			       stats0_ == &SwStatsCpu::statsGBRG10PLine0;
++	if (!supported || params.lscRange <= 0.0f) {
++		lscActive_ = false;
++		lscR_ = lscG_ = lscB_ = nullptr;
++		return;
++	}
++
++	lscFrameSize_ = frameSize;
++	/* The debayer's black level is normalised to the 8-bit sample range. */
++	for (unsigned int c = 0; c < 3; c++)
++		lscBlack_[c] = static_cast<unsigned int>(std::lround(params.blackLevel[c] * 255.0f));
++	if (!lscActive_ || params.lscRevision != lscRevision_) {
++		constexpr unsigned int nodes = DebayerParams::kLscWidth * DebayerParams::kLscHeight;
++		for (unsigned int i = 0; i < nodes; i++)
++			for (unsigned int c = 0; c < 3; c++)
++				lscGains_[c][i] = 1.0f + params.lscMesh[i * 4 + c] / 255.0f * params.lscRange;
++		lscRevision_ = params.lscRevision;
++	}
++	lscActive_ = true;
++}
++
++float SwStatsCpu::lscGainAt(unsigned int channel, float u, float v) const
++{
++	constexpr unsigned int w = DebayerParams::kLscWidth;
++	constexpr unsigned int h = DebayerParams::kLscHeight;
++	const float fx = std::clamp(u, 0.0f, 1.0f) * (w - 1);
++	const float fy = std::clamp(v, 0.0f, 1.0f) * (h - 1);
++	const unsigned int x0 = std::min<unsigned int>(fx, w - 2);
++	const unsigned int y0 = std::min<unsigned int>(fy, h - 2);
++	const float tx = fx - x0, ty = fy - y0;
++	const auto &m = lscGains_[channel];
++	return m[y0 * w + x0] * (1 - tx) * (1 - ty) + m[y0 * w + x0 + 1] * tx * (1 - ty) +
++	       m[(y0 + 1) * w + x0] * (1 - tx) * ty + m[(y0 + 1) * w + x0 + 1] * tx * ty;
++}
++
++void SwStatsCpu::prepareLscLine(unsigned int y)
++{
++	/* The 10-bit packed line functions sample every other 2x2 block: 4 pixels apart. */
++	const unsigned int samples = (window_.width + 3) / 4 + 1;
++	lscLineR_.resize(samples);
++	lscLineG_.resize(samples);
++	lscLineB_.resize(samples);
++
++	const float v = lscFrameSize_.height > 1 ? static_cast<float>(y) / (lscFrameSize_.height - 1) : 0.5f;
++	for (unsigned int k = 0; k < samples; k++) {
++		const unsigned int x = window_.x + 4 * k + 1;
++		const float u = lscFrameSize_.width > 1 ? static_cast<float>(x) / (lscFrameSize_.width - 1) : 0.5f;
++		lscLineR_[k] = static_cast<uint16_t>(std::lround(lscGainAt(0, u, v) * 256.0f));
++		lscLineG_[k] = static_cast<uint16_t>(std::lround(lscGainAt(1, u, v) * 256.0f));
++		lscLineB_[k] = static_cast<uint16_t>(std::lround(lscGainAt(2, u, v) * 256.0f));
++	}
++	lscR_ = lscLineR_.data();
++	lscG_ = lscLineG_.data();
++	lscB_ = lscLineB_.data();
++}
++
+ void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input,
+ 			      Size inputSize, bool tiledAwb, bool measureFocus)
+ {
+-- 
+2.56.1
+

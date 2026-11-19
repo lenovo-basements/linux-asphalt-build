@@ -1,0 +1,154 @@
+From 32c0a182b94fd6a13c7ef29230c576495742a32c Mon Sep 17 00:00:00 2001
+From: lolipuru <banstellazz@gmail.com>
+Date: Fri, 20 Nov 2026 05:49:00 +0700
+Subject: [PATCH] ipa: simple: adjust: Allow a tuned gamma over analogue gain
+
+Low-light frames lose their shadows at a fixed 2.2 gamma, and raising
+exposure to lift them clips the highlights first. A higher gamma lifts
+shadows far more than highlights (at 2.6 instead of 2.2: +31% at 2%
+linear, +5% at 50%, highlights unchanged), so let the tuning file raise
+it with analogue gain:
+
+  - Adjust:
+      gamma:
+        gain:  [ 1.0, 4.0, 16.0 ]
+        value: [ 2.2, 2.35, 2.6 ]
+
+The value is piecewise linear in gain. Without the table, and once an
+application sets controls::Gamma, behaviour is unchanged.
+
+OV13B10 night scene at 16x: shadow percentile p25 27 -> 36, pixels below
+30 28% -> 17%, highlights p95 175 -> 185, nothing clipped, luma noise
++15%.
+
+Assisted-by: LLM
+Signed-off-by: lolipuru <banstellazz@gmail.com>
+---
+ src/ipa/simple/algorithms/adjust.cpp | 46 +++++++++++++++++++++++++++-
+ src/ipa/simple/algorithms/adjust.h   | 12 ++++++++
+ 2 files changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/src/ipa/simple/algorithms/adjust.cpp b/src/ipa/simple/algorithms/adjust.cpp
+index 8bf39c4..1285049 100644
+--- a/src/ipa/simple/algorithms/adjust.cpp
++++ b/src/ipa/simple/algorithms/adjust.cpp
+@@ -8,6 +8,8 @@
+ 
+ #include "adjust.h"
+ 
++#include <algorithm>
++
+ #include <libcamera/base/log.h>
+ #include <libcamera/base/utils.h>
+ 
+@@ -24,8 +26,34 @@ constexpr float kDefaultSaturation = 1.0f;
+ 
+ LOG_DEFINE_CATEGORY(IPASoftAdjust)
+ 
+-int Adjust::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
++int Adjust::init(IPAContext &context, const ValueNode &tuningData)
+ {
++	/*
++	 * Tuning (optional):
++	 *   gamma: { gain: [ 1.0, 4.0, 16.0 ], value: [ 2.2, 2.3, 2.6 ] }
++	 * piecewise linear in analogue gain.
++	 */
++	const ValueNode &gamma = tuningData["gamma"];
++	if (gamma.isDictionary()) {
++		for (const auto &[key, out] : { std::pair{ "gain", &gammaGains_ },
++						std::pair{ "value", &gammaValues_ } }) {
++			const ValueNode &list = gamma[key];
++			if (!list.isList())
++				break;
++			for (const auto &v : list.asList())
++				out->push_back(v.get<float>(0.0f));
++		}
++		if (gammaGains_.empty() || gammaGains_.size() != gammaValues_.size() ||
++		    !std::is_sorted(gammaGains_.begin(), gammaGains_.end()) ||
++		    std::any_of(gammaValues_.begin(), gammaValues_.end(),
++				[](float g) { return g < 0.5f || g > 5.0f; })) {
++			LOG(IPASoftAdjust, Error)
++				<< "gamma needs 'gain' and 'value' lists of the same length,"
++				<< " gain ascending, values in [0.5, 5]";
++			return -EINVAL;
++		}
++	}
++
+ 	context.ctrlMap[&controls::Gamma] =
+ 		ControlInfo(0.1f, 10.0f, kDefaultGamma);
+ 	context.ctrlMap[&controls::Contrast] =
+@@ -40,6 +68,7 @@ int Adjust::configure(IPAContext &context,
+ 		      [[maybe_unused]] const IPAConfigInfo &configInfo)
+ {
+ 	context.activeState.knobs.gamma = kDefaultGamma;
++	gammaFromApplication_ = false;
+ 	context.activeState.knobs.contrast = std::optional<float>();
+ 	context.activeState.knobs.saturation = std::optional<float>();
+ 
+@@ -54,6 +83,7 @@ void Adjust::queueRequest(typename Module::Context &context,
+ 	const auto &gamma = controls.get(controls::Gamma);
+ 	if (gamma.has_value()) {
+ 		context.activeState.knobs.gamma = gamma.value();
++		gammaFromApplication_ = true;
+ 		LOG(IPASoftAdjust, Debug) << "Setting gamma to " << gamma.value();
+ 	}
+ 
+@@ -92,11 +122,25 @@ void Adjust::applySaturation(Matrix<float, 3, 3> &matrix, float saturation)
+ 		ycbcr2rgb * saturationMatrix * rgb2ycbcr * matrix;
+ }
+ 
++float Adjust::tunedGamma(float gain) const
++{
++	if (gain <= gammaGains_.front())
++		return gammaValues_.front();
++	if (gain >= gammaGains_.back())
++		return gammaValues_.back();
++	const size_t i = std::upper_bound(gammaGains_.begin(), gammaGains_.end(), gain) -
++			 gammaGains_.begin();
++	const float t = (gain - gammaGains_[i - 1]) / (gammaGains_[i] - gammaGains_[i - 1]);
++	return gammaValues_[i - 1] + t * (gammaValues_[i] - gammaValues_[i - 1]);
++}
++
+ void Adjust::prepare(IPAContext &context,
+ 		     [[maybe_unused]] const uint32_t frame,
+ 		     IPAFrameContext &frameContext,
+ 		     DebayerParams *params)
+ {
++	if (!gammaFromApplication_ && !gammaGains_.empty())
++		context.activeState.knobs.gamma = tunedGamma(context.activeState.agc.again);
+ 	frameContext.gamma = context.activeState.knobs.gamma;
+ 	frameContext.contrast = context.activeState.knobs.contrast;
+ 
+diff --git a/src/ipa/simple/algorithms/adjust.h b/src/ipa/simple/algorithms/adjust.h
+index 49c1f26..091d131 100644
+--- a/src/ipa/simple/algorithms/adjust.h
++++ b/src/ipa/simple/algorithms/adjust.h
+@@ -7,6 +7,8 @@
+ 
+ #pragma once
+ 
++#include <vector>
++
+ #include "libcamera/internal/matrix.h"
+ 
+ #include <libipa/interpolator.h>
+@@ -43,6 +45,16 @@ public:
+ 
+ private:
+ 	void applySaturation(Matrix<float, 3, 3> &ccm, float saturation);
++	float tunedGamma(float gain) const;
++
++	/*
++	 * Optional tuned gamma over analogue gain: a higher gamma in low light
++	 * lifts the shadows far more than the highlights. Not used once an
++	 * application sets controls::Gamma.
++	 */
++	std::vector<float> gammaGains_;
++	std::vector<float> gammaValues_;
++	bool gammaFromApplication_ = false;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+-- 
+2.56.1
+
