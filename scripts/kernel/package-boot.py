@@ -126,7 +126,11 @@ def rename_firmware(entries, rules, firmware_dir=None):
             report.append({'from': name, 'to': new, 'sha256': sha256(content)}
                           if stat.S_ISREG(fields[1]) else {'from': name, 'to': new})
         renamed[new] = (fields, content)
-    require(report or not rules, 'No initramfs entry matched the firmware rename rules')
+    # This should no-op for first timers
+    def present(new):
+        return any(n == prefix + new or n.startswith(prefix + new + '/') for n in entries)
+    require(report or all(present(new) for _, new in rules),
+            'No initramfs entry matched the firmware rename rules')
     return renamed, report
 
 
