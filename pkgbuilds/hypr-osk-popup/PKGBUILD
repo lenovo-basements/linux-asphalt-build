@@ -1,11 +1,12 @@
 # Hyprland plugin: keep GTK4 popovers (Nautilus rename, new folder, search)
-# open while the on-screen keyboard is shown and tapped. Hyprland drops popup
+# open while the on-screen keyboard is shown and tapped, and drop the touch that
+# would crash Hyprland while a session unlocks (see main.cpp). Hyprland drops popup
 # grabs on any refocus outside the popup, OSK layers included; see main.cpp.
 # Like hyprgrass, it only works with the exact Hyprland build it was compiled
 # against, so it depends on that exact version: rebuild with Hyprland.
 pkgname=hypr-osk-popup
-pkgver=2
-pkgrel=1
+pkgver=3
+pkgrel=3
 pkgdesc="Hyprland plugin: keep popups open while the on-screen keyboard is used"
 arch=(aarch64)
 license=(GPL-2.0-or-later)

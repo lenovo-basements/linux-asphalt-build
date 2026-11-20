@@ -11,12 +11,26 @@
 // So the OSK joins the active grab: when its layer opens (before the map
 // refocus) and on every touch or button press (before that refocus). A press
 // anywhere else still dismisses the popup as usual.
+//
+// Also a touch guard for unlocking (Hyprland 0.57.2): while the lock client
+// tears its surfaces down, the session still counts as locked but the lock
+// surface's wl_surface is gone. CInputManager::onTouchDown then hands a null
+// surface to CSeatManager::sendTouchDown, which dereferences it (SEGV in
+// CWLSurfaceResource::client). A finger landing in that gap is dropped here,
+// before Hyprland picks a target; the touch-up of a dropped touch-down is
+// harmless (no touch focus).
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/desktop/state/LayerState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
+#include <hyprland/src/protocols/SessionLock.hpp>
+#include <hyprland/src/managers/SessionLockManager.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/devices/ITouch.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -46,6 +60,18 @@ namespace {
             nullptr);
     }
 
+    // Same monitor choice as CInputManager::onTouchDown.
+    bool lockSurfaceGone(const ITouch::SDownEvent& e) {
+        if (!g_pSessionLockManager || !g_pSessionLockManager->isSessionLocked() || !e.device)
+            return false;
+        auto monitor = State::monitorState()->query().name(!e.device->m_boundOutput.empty() ? e.device->m_boundOutput : "").run();
+        monitor      = monitor ? monitor : Desktop::focusState()->monitor();
+        if (!monitor)
+            return false;
+        const auto lock = g_pSessionLockManager->getSessionLockSurfaceForMonitor(monitor->m_id);
+        return !lock || !lock->surface || !lock->surface->surface();
+    }
+
     void joinGrabAll() {
         if (!g_pSeatManager->m_seatGrab)
             return;
@@ -71,9 +97,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         if (isOsk(ls))
             joinGrab(ls);
     });
-    g_touchDown   = events.input.touch.down.listen([](const auto&, auto&) { joinGrabAll(); });
+    g_touchDown   = events.input.touch.down.listen([](const auto& e, auto& info) {
+        if (lockSurfaceGone(e)) {
+            info.cancelled = true;
+            return;
+        }
+        joinGrabAll();
+    });
     g_mouseButton = events.input.mouse.button.listen([](const auto&, auto&) { joinGrabAll(); });
-    return {"osk-popup", "Keep popups open while the on-screen keyboard is used", "asphalt", "1"};
+    return {"osk-popup", "Keep popups open while the on-screen keyboard is used; drop touches during unlock", "asphalt", "2"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
