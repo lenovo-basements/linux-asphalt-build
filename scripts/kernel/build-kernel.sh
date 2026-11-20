@@ -52,7 +52,8 @@ if [[ "$(uname -s)" == Darwin ]]; then
     # macOS host: Homebrew toolchain plus small headers so the kernel's host
     # tools (modpost, gen_init_cpio, ...) build against Darwin's libc.
     brew="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
-    export PATH="$brew/opt/gnu-sed/libexec/gnubin:$brew/opt/coreutils/libexec/gnubin:$brew/opt/llvm/bin:$brew/bin:$PATH"
+    # rustup is keg-only in Homebrew; its rustc (with rust-src) builds CONFIG_RUST.
+    export PATH="$brew/opt/rustup/bin:$brew/opt/gnu-sed/libexec/gnubin:$brew/opt/coreutils/libexec/gnubin:$brew/opt/llvm/bin:$brew/bin:$PATH"
     MAKE=gmake
     compat="$HERE/host-compat"
     make_args=(ARCH=arm64 "LLVM=$brew/opt/llvm/bin/" "LD=$brew/opt/lld/bin/ld.lld"

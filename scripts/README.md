@@ -107,6 +107,12 @@ as it straight to crashdump with error code 669
   `lz4`. The headers in `host-compat/` let the kernel's host tools (modpost,
   gen_init_cpio, ...) build against Darwin's libc. The source tree must be on a
   case-sensitive volume.
+- **Rust (both):** `CONFIG_RUST` (for the Rust binder that Waydroid needs) wants
+  rustc with the `rust-src` component and `bindgen`; `make rustavailable`
+  checks them. With CFI on, rustc's LLVM should match clang's major version.
+  macOS: Homebrew `rustup` (keg-only, picked up by build-kernel.sh) and
+  `bindgen`, then `rustup toolchain install stable --profile minimal
+  --component rust-src`.
 
 ### Output
 

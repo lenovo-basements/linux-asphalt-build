@@ -73,7 +73,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **WIFI** | ath11k have D3cold failure which is unique to lenovo (lmao), so 2s firmware reload after suspend is normal (don't worry, it's automatic), WoW policy won't works there [Reference](https://lore-kernel.gnuweeb.org/ath11k/0fbb0b6e-c849-4e26-9c46-2ac4986f6b52@hauke-m.de/t/) |
 | **Browser** | Youtube ambient mode breaks zero-copy video path due to YUV have to be convert and copied into an RGBA canvas, (not only that, it break cross-fade, so vrr never works it'll keep force render at 144hz) fixable, but will break many aspects. (2.8w (HDR), 2.71w (SDR) vs 33w (up to 35w with hdr) battery usage with ambient mode enabled)|
 | **Persist** | healthy persist partition is required for hardware functional on mainline linux, **DO NOT** boot this rootfs if your persist is corrupted, or broken, if you're on zui **ALWAYS** backup clean persist, you **CAN'T** borrow it from someone else (sure corrupted persist can still boots, but i won't **guarantee** hardware functionally) |
-| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux |
+| **Waydroid** | I highly, highly recommend to compile it yourself if you want to run waydroid on linux, however, if you really want to use the quick way, `sudo pacman -S wayland` still works. |
 
 ## Relock bootloader
 
