@@ -48,13 +48,28 @@ def log(message):
 
 
 def front_camera():
-    """node.name of the PipeWire camera libcamera reports as front-facing."""
+    """node.name of the front camera, or None when another camera is busy.
+
+    libcamera's simple pipeline runs one camera at a time on this SoC (one
+    CAMSS media device). Starting the front camera while an app streams
+    another one fails with EBUSY, and an app that is starting one at the same
+    time can hang on it (GNOME Snapshot does). Sharing the front camera with an
+    app already streaming it is fine: PipeWire feeds both.
+    """
     result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5)
+    front, busy = None, False
     for item in json.loads(result.stdout or "[]"):
-        props = item.get("info", {}).get("props", {}) if isinstance(item.get("info"), dict) else {}
-        if props.get("media.class") == "Video/Source" and props.get("api.libcamera.location") == "front":
-            return props.get("node.name")
-    return None
+        info = item.get("info") if isinstance(item.get("info"), dict) else {}
+        props = info.get("props", {})
+        if props.get("media.class") != "Video/Source" or "api.libcamera.location" not in props:
+            continue
+        if props.get("api.libcamera.location") == "front":
+            front = props.get("node.name")
+        elif info.get("state") == "running":
+            busy = True
+    if busy:
+        raise RuntimeError("another camera is in use; leaving it alone")
+    return front
 
 
 def open_camera():
@@ -123,7 +138,11 @@ def frames(capture, seconds):
 
 def enroll(add=False):
     import numpy
-    capture = open_camera()
+    try:
+        capture = open_camera()
+    except RuntimeError as error:
+        log(str(error))
+        return 3
     faces = Faces()
     samples, last = [], 0.0
     print("Look at the front camera; turn your head a little while it collects.", flush=True)

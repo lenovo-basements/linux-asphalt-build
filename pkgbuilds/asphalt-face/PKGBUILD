@@ -1,5 +1,5 @@
 pkgname=asphalt-face
-pkgver=2
+pkgver=3
 pkgrel=1
 pkgdesc="2D face unlock for the Lenovo Legion Y700 Gen 2 (asphalt) lock screen"
 arch=(any)
