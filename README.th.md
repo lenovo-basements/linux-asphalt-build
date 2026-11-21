@@ -40,7 +40,7 @@
 | **ไวไฟ / บลูทูธ** | WCN6855, ใช้โค้ดผ่าน upstream เหมือนกัน (เฟิร์มแวร์ใช้ของ xiaomi pad 6 pro (`OS3.0.7.0.VMYCNXM`) เพราะของ lenovo ต้องแก้บัค WMM ซึ่งมันไม่คุ้ม ต่อจะให้ใช้ claude fable ก็เถอะ ไม่คุ้ม เอาโทเคนไปทำอย่างอื่นดีกว่า) |
 | **CPU** | Octa-core (1×3.19 GHz Cortex-X2 + 3×2.75 GHz Cortex-A710 + 4×1.80 GHz Cortex-A510) |
 | **GPU** | Adreno 730 แต่ Freedreno โชว์เป็น FD725 (`0x07030002`) แทน. [Reference](https://raw.githubusercontent.com/termux/termux-packages/f8013fe24f/packages/mesa/0016-unofficial_support_adreno_710_720_722.patch) |
-| **จอภาพ** | 30/60/120/144 Hz ใช้ได้หมดนะ. VRR ก็ได้ตั้งแต่ ~48 Hz ลากยาวถึง 144 Hz. จริงๆ 30 Hz มันรับนะ แต่ Lenovo ไม่ได้ตั้ง `mdss-dsi-qsync-min-refresh-rate` ไว้ มันเลยได้แค่ 48hz นั่นแหล่ะ [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
+| **จอภาพ** | 30/60/120/144 Hz ใช้ได้หมดนะ. VRR ก็ได้ตั้งแต่ ~48 Hz ลากยาวถึง 144 Hz. จริงๆ 30 Hz มันรับนะ แต่ Lenovo ไม่ได้ตั้ง `mdss-dsi-qsync-min-refresh-rate` ไว้ มันเลยได้แค่ 48hz นั่นแหล่ะ [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi), vrr ใช้ใน stylus ไม่ได้ ในรอมศูนย์มันก็ใช้ไม่ได้เหมือนกัน |
 | **microSD** | ความเร็วไม่ได้แย่นะ ลองกับ SanDisk Ultra (A1) มันก็พอได้อยู่อะ (mount ในชื่อ `microSD` เพราะกันปัญหาชื่อซํ้า) ส่วนความเร็วก็แล้วแต่ machine god จะประทานพร |
 | **ทัชสกรีน** | Novatek NT36523n — upstream + โค้ดฝั่ง lenovo นิดหน่อย สำหรับสไตลัส |
 | **Fuel gauge** | ตอนนี้รีพอร์ตถูกต้อง 100% (เฟิร์มแวร์ lenovo แม่งรีพอร์ต `power_now` เป็น state of charge, วัดจาก Current × Voltage) ของแถมคือ SC8280XP แม่งก็รีพอร์ตเป็น µAh แทนที่จะเป็น mAh |
@@ -61,11 +61,11 @@
 | --- | --- |
 | **HDR** | จอนอกที่มีไม่รับ HDR (DHI-PM19-S201S) จอในใช้ได้หมด แต่ต้องใช้ dummy EDID เท่านั้น |
 | **AV1** | ไปด่า qcom ว่าทำไมมึงไม่ใส่ hardware acceleration มาให้ เพราะงั้นอย่าหาเปิด AV1 เด็ดขาด |
-| **Stylus** | AP500U / AP501U (Picasso). ไม่มีติดตัวสักอัน เลยซัพพอร์ตไม่ได้ (ถ้าไม่มีไรติดขัด จันทร์ไม่ก็อังคารนี้น่าจะเริ่มละ) แต่เบสอะอยู่ใน kernel แล้ว |
+| **Stylus** | AP500U / AP501U (Picasso). ใส่มาแล้ว เหลือแค่ส่วน userspace ที่ต้องเพิ่มหน่อย (วัดแรงกดกับองศาปากกามันแล้วแต่แอปไง คงไปโฟกัสกับพวก bluez หรือลูกเล่นที่เหลือดีกว่า) |
 | **Modem** | แท็บเล็ตนี้มันไม่มีโมเด็ม เปิดยังไงมันก็ไม่มา เหมือนแฟนเก่าที่จากไป. |
 | **GPS** | แท็บเล็ตนี้ไม่มี GPS ถ้าจะเดินป่าแนะนำให้ใช้มือถือ ไม่ก็เข็มทิศ. |
 | **NFC** | แท็บเล็ตมันไม่มี NFC ว้อย ไม่ต้องเอาไปแตะ true wallet ที่เซเว่น |
-| **Gestures** | พวกลูกเล่นตอนนี้ยังไม่ได้ใส่มา รอปากกามาถึงบ้านก่อน มันมี node ที่เรียกว่า game_mode มันมีปัญหากับกันข้อมืออยู่ เลยต้องเบรคก่อน, นอกจาก DT2W อย่างอื่นก็ไม่มี เหมือนอนาคต |
+| **Gestures** | ใส่มาหมดละ ทั้ง `DT2W`, `pen_mode`, `game_mode`, `panel orientation` |
 
 ## Technical notes
 | Component | Notes |

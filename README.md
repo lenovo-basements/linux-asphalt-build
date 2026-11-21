@@ -40,7 +40,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Wi-Fi / Bluetooth** | WCN6855, using upstream code (WCN6855 firmware is from `liquin` (Xiaomi Pad 6 Pro), `OS3.0.7.0.VMYCNXM` due to stock lenovo firmware require WMM workaround which is very, very ugly to fix (even with LLM assisted, or savior claude fable, and gain is small) |
 | **CPU** | Octa-core (1×3.19 GHz Cortex-X2 + 3×2.75 GHz Cortex-A710 + 4×1.80 GHz Cortex-A510) |
 | **GPU** | Adreno 730 as Freedreno 725 (`0x07030002`). [Reference](https://raw.githubusercontent.com/termux/termux-packages/f8013fe24f/packages/mesa/0016-unofficial_support_adreno_710_720_722.patch) |
-| **Display** | 30/60/120/144 Hz reported correctly. VRR from ~48 Hz up to 144 Hz. 30 Hz is supported in hardware, but Lenovo never set `mdss-dsi-qsync-min-refresh-rate` to 30, so the default floor is currently 48 Hz. [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi) |
+| **Display** | 30/60/120/144 Hz reported correctly. VRR from ~48 Hz up to 144 Hz. 30 Hz is supported in hardware, but Lenovo never set `mdss-dsi-qsync-min-refresh-rate` to 30, so the default floor is currently 48 Hz. [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi), vrr is not support for stylus (as qsync is not support on pen mode, same as stock). |
 | **microSD** | Tested with SanDisk Ultra (A1) (mount under `/mnt/microSD` to avoid name conflict with external drive with same name), speed is vary, not gonnna grab all of them and do benchmark for sure |
 | **Touch** | Novatek NT36523n — upstream + device-specific changes. |
 | **Fuel gauge** | battery report is now working properly with `power_now` and `µAh unit` implement (lenovo firmware only answer `power_now` with state of charge (measure with Current × Voltage) SC8280XP on lenovo sm8475 use µAh instead of mAh) |
@@ -61,11 +61,11 @@ Scripts and device support for running **Arch Linux ARM** on the
 | --- | --- |
 | **HDR (External)** | External monitor that i own (DHI-PM19-S201S) doesn’t support HDR. |
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom, use [enhanced-h264ify](https://chromewebstore.google.com/detail/enhanced-h264ify/omkfmpieigblcllmkgbflkikinpkodlk) and kill AV1. |
-| **Stylus** | AP500U / AP501U (`Picasso`). WIP on userspace, initial support is already on kernel. |
+| **Stylus** | AP500U / AP501U (`Picasso`). initial support is now on kernel, including pressure / tilt sensitivity  |
 | **Modem** | this tablet doesn't have modem, you can't add something that doesn't have on first place. |
 | **GPS** | this tablet doesn't have gps antenna, so don't bring it for hiking or camping, use compass, or your phone. |
 | **NFC** | this tablet doesn't have nfc, so don't touch your card on it |
-| **Gestures** | touch gestures is temporary on halt (the tricky part is `game_mode` is conflict with pen mode (palm rejection), so touch gestures kernel is temporary on halt until i finish pen side), only DT2W is implemented for now. |
+| **Gestures** | `DT2W`, `pen_mode`, `game_mode`, `panel orientation` for pen are now implemented. |
 
 ## Technical notes
 | Component | Notes |
