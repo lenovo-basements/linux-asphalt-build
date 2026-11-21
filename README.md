@@ -42,7 +42,7 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **GPU** | Adreno 730 as Freedreno 725 (`0x07030002`). [Reference](https://raw.githubusercontent.com/termux/termux-packages/f8013fe24f/packages/mesa/0016-unofficial_support_adreno_710_720_722.patch) |
 | **Display** | 30/60/120/144 Hz reported correctly. VRR from ~48 Hz up to 144 Hz. 30 Hz is supported in hardware, but Lenovo never set `mdss-dsi-qsync-min-refresh-rate` to 30, so the default floor is currently 48 Hz. [Reference](https://github.com/lolipuru/kernel_lenovo_sm8475-devicetrees/blob/lineage-24.0/qcom/display/display/cape-sde-display-common.dtsi), vrr is not support for stylus (as qsync is not support on pen mode, same as stock). |
 | **microSD** | Tested with SanDisk Ultra (A1) (mount under `/mnt/microSD` to avoid name conflict with external drive with same name), speed is vary, not gonnna grab all of them and do benchmark for sure |
-| **Touch** | Novatek NT36523n — upstream + device-specific changes. |
+| **Touch** | Novatek NT36523n — using available upstream + device-specific changes. |
 | **Fuel gauge** | battery report is now working properly with `power_now` and `µAh unit` implement (lenovo firmware only answer `power_now` with state of charge (measure with Current × Voltage) SC8280XP on lenovo sm8475 use µAh instead of mAh) |
 | **Camera** | ROW and PRC ship different modules. This tree targets the ROW set (`ov13b10`, `s5k4h7`, `sc202cs`) PRC use `hi1339` as main camera and `gc02m1` for NEC (need confirmation for NEC), camera flash is now support (`pm8350c_flash`). |
 | **USB** | Working, including host mode, DP-alt, DP-alt audio, and dual-port arbitration. usb on y700 (pretty much all generations) have usb port priority, more info on [port priority](/docs/port_priority.md) + onsemi FSA4480 type c port switch also working, now NCM is supported as well|
@@ -54,6 +54,8 @@ Scripts and device support for running **Arch Linux ARM** on the
 | **Charging** | base charging code is using upstream code, with bypass charging (`pmic-glink` ported from SM8550, Lenovo supply props from NEC kernel source) |
 | **Thermal** | Working. Power profiles included, 8 ADC thermistor are now implemented (`pmk8350_die_temp`, `pm8350_die_temp`, `pm8350_msm_therm`, `pm8350_cam_flash_therm`, `pm8350_hot_pocket_therm`, `pm8350_wide_rfc_therm`, `pm8350_chg_therm2`, `pm8350_usb1_conn_ts_ntc`,) temperature report is more or less accurated compare to zui (for example: `pm8350_chg_therm2` on mainline is 38.3 °C vs 37.8 °C on stock. many factor affect the report, so take it with gain of salt) |
 | **HDR (Internal)** | Internal panel HDR is now supported (require dummy EDID for each WMs) |
+| **Stylus** | AP500U / AP501U (`Picasso`). initial support is now on kernel, including pressure / tilt sensitivity  |
+| **Gestures** | `DT2W`, `pen_mode`, `game_mode`, `panel orientation` for pen are now implemented. |
 
 ## What doesn’t work / TO-DO
 
@@ -61,11 +63,9 @@ Scripts and device support for running **Arch Linux ARM** on the
 | --- | --- |
 | **HDR (External)** | External monitor that i own (DHI-PM19-S201S) doesn’t support HDR. |
 | **AV1** | Software only. Qualcomm only started hardware AV1 on SM8550 and later — middle finger from qcom, use [enhanced-h264ify](https://chromewebstore.google.com/detail/enhanced-h264ify/omkfmpieigblcllmkgbflkikinpkodlk) and kill AV1. |
-| **Stylus** | AP500U / AP501U (`Picasso`). initial support is now on kernel, including pressure / tilt sensitivity  |
 | **Modem** | this tablet doesn't have modem, you can't add something that doesn't have on first place. |
 | **GPS** | this tablet doesn't have gps antenna, so don't bring it for hiking or camping, use compass, or your phone. |
 | **NFC** | this tablet doesn't have nfc, so don't touch your card on it |
-| **Gestures** | `DT2W`, `pen_mode`, `game_mode`, `panel orientation` for pen are now implemented. |
 
 ## Technical notes
 | Component | Notes |
