@@ -26,7 +26,11 @@ options=(!strip !debug)
 package() {
   local mod="$pkgdir/usr/lib/modules/$_release"
   install -d "$pkgdir/usr/lib/modules"
-  cp -a "$_build/modules-root/usr/lib/modules/$_release" "$pkgdir/usr/lib/modules/"
+  if [[ -f "$_build/modules.tar.gz" ]]; then
+    bsdtar -xzf "$_build/modules.tar.gz" -C "$pkgdir" "usr/lib/modules/$_release"
+  else
+    cp -a "$_build/modules-root/usr/lib/modules/$_release" "$pkgdir/usr/lib/modules/"
+  fi
   # build/source point into the Mac's tree.
   rm -f "$mod/build" "$mod/source"
   rm -f "$mod"/._* 2>/dev/null || true

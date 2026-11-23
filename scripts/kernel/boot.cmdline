@@ -1,0 +1,1 @@
+maxcpus=8 panic=0 rdinit=/init fbcon=nodefer novatek_nt36523n.pen_enabled=0 panel_lenovo_asphalt.refresh_rate=144 console=tty0 loglevel=4 mem_sleep_default=s2idle cfg80211.ieee80211_regdom=US log_buf_len=4M

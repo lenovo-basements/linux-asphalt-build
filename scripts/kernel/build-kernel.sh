@@ -1,10 +1,13 @@
 #!/bin/bash
 # Build the asphalt (Lenovo Legion Y700 Gen 2) kernel and package
 #
-#   scripts/kernel/build-kernel.sh --src ~/linux --baseline ~/asphalt-baseline \
+#   scripts/kernel/build-kernel.sh --src ~/linux --busybox ~/busybox \
 #       --out /tmp/asphalt-build --artifacts ./out [--localversion -asphalt] \
 #       [--fragment scripts/kernel/asphalt.config ...] [--defconfig y700.config]
 #
+# Packaging: with --busybox (static aarch64), make-boot.py builds boot.img +
+# vendor_boot.img from scratch. --baseline <dir> instead repackages a known-good
+# pair with package-boot.py (the old way, stricter DTB checks).
 # --defconfig only acts when <out>/.config does not exist yet (a first build);
 # an existing .config is never overwritten.
 # Works on Linux (native arm64 or cross with LLVM) and on macOS (Homebrew
@@ -12,7 +15,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC="" OUT="" ART="" BASELINE="" LOCALVERSION="" JOBS="" DEFCONFIG=""
+SRC="" OUT="" ART="" BASELINE="" BUSYBOX="" LOCALVERSION="" JOBS="" DEFCONFIG=""
 FRAGMENTS=()
 DTB_NAME=sm8475-lenovo-asphalt-row
 # root compatible differs from it on purpose. package-boot.py accepts exactly this
@@ -24,13 +27,14 @@ FIRMWARE_RENAMES=(
 )
 FIRMWARE_DIR="$HERE/../../../asphalt-firmware"
 
-usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --src) SRC="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --artifacts) ART="$2"; shift 2 ;;
         --baseline) BASELINE="$2"; shift 2 ;;
+        --busybox) BUSYBOX="$2"; shift 2 ;;
         --localversion) LOCALVERSION="$2"; shift 2 ;;
         --defconfig) DEFCONFIG="$2"; shift 2 ;;
         --fragment) FRAGMENTS+=("$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"); shift 2 ;;
@@ -41,7 +45,16 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown option: $1" >&2; usage 1 ;;
     esac
 done
-[[ -n "$SRC" && -n "$OUT" && -n "$ART" && -n "$BASELINE" ]] || usage 1
+[[ -n "$SRC" && -n "$OUT" && -n "$ART" ]] || usage 1
+if [[ -n "$BASELINE" && -n "$BUSYBOX" ]]; then
+    echo "pass --busybox (build from scratch) or --baseline (repackage), not both" >&2
+    exit 1
+elif [[ -z "$BASELINE" && -z "$BUSYBOX" ]]; then
+    echo "need --busybox <static aarch64 busybox> to build the boot images (see scripts/README.md)" >&2
+    exit 1
+fi
+[[ -z "$BUSYBOX" || -f "$BUSYBOX" ]] || { echo "--busybox $BUSYBOX: no such file" >&2; exit 1; }
+[[ -d "$FIRMWARE_DIR" ]] || { echo "asphalt-firmware not found at $FIRMWARE_DIR (use --firmware-dir)" >&2; exit 1; }
 if [[ ! -f "$OUT/.config" && -z "$DEFCONFIG" ]]; then
     echo "$OUT/.config missing. First build? Add --defconfig y700.config (see scripts/README.md)" >&2
     exit 1
@@ -141,10 +154,17 @@ rm -rf "$ART/modules-root"
 echo "BUILD-OK $(cat "$ART/kernel.release")"
 
 rm -rf "$ART/flash"
-python3 "$HERE/package-boot.py" --baseline "$BASELINE" --image "$ART/Image" \
-    --dtb "$ART/$DTB_NAME-abl.dtb" --config "$ART/kernel.config" \
-    --kernel-release "$ART/kernel.release" --output "$ART/flash" \
-    --allow-compatible "$ALLOW_COMPATIBLE" \
-    $(printf -- '--rename-firmware %s ' "${FIRMWARE_RENAMES[@]}") \
-    --firmware-dir "$FIRMWARE_DIR" > "$ART/package.log"
+if [[ -n "$BUSYBOX" ]]; then
+    python3 "$HERE/make-boot.py" --image "$ART/Image" \
+        --dtb "$ART/$DTB_NAME-abl.dtb" --config "$ART/kernel.config" \
+        --kernel-release "$ART/kernel.release" --output "$ART/flash" \
+        --busybox "$BUSYBOX" --firmware-dir "$FIRMWARE_DIR" > "$ART/package.log"
+else
+    python3 "$HERE/package-boot.py" --baseline "$BASELINE" --image "$ART/Image" \
+        --dtb "$ART/$DTB_NAME-abl.dtb" --config "$ART/kernel.config" \
+        --kernel-release "$ART/kernel.release" --output "$ART/flash" \
+        --allow-compatible "$ALLOW_COMPATIBLE" \
+        $(printf -- '--rename-firmware %s ' "${FIRMWARE_RENAMES[@]}") \
+        --firmware-dir "$FIRMWARE_DIR" > "$ART/package.log"
+fi
 echo "PACKAGE-OK $ART/flash"

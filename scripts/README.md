@@ -10,7 +10,7 @@ numbered sections after that explain each step and their options.
 
 - [Before you start](#before-you-start)
 - [The first build, the short version](#first-build-the-short-version)
-- [0. Sources and a packaging baseline](#0-sources-and-a-packaging-baseline)
+- [0. Sources and busybox](#0-sources-and-busybox)
 - [1. Build host](#1-build-host)
 - [2. Kernel](#2-kernel)
 - [3. Packages](#3-packages-build-packagessh)
@@ -24,27 +24,29 @@ numbered sections after that explain each step and their options.
 You need all of these. Don't skip the backup one.
 
 - [ ] A **Lenovo Legion Y700 (2023), TB320FC** with an **unlocked bootloader**.
-      This tree targets the ROW (global) model. A PRC (国行) tablet uses the same
-      DTB but different camera modules, and the maintainer hasn't tested it. Reports are welcome.
-- [ ] **Backups of `persist`, `sn` and `devinfo`**, kept off the tablet. They are
+      This tree targets the ROW (global) model. A PRC tablet uses the same
+      DTB but different camera modules (Hi1339), and NEC also use ROW but different camera modules, PR is welcome
+- [ ] **Backups of `persist`, `sn` and `oemowninfo`**, kept off the tablet. They are
       unique to your tablet and you can't borrow them from someone else (see
       [Persist](../README.md#technical-notes)). From a recovery with root adb, for example Lineage recovery:
       ```sh
       adb pull /dev/block/by-name/persist persist.img
       adb pull /dev/block/by-name/sn sn.img
-      adb pull /dev/block/by-name/devinfo devinfo.img
+      adb pull /dev/block/by-name/oemowninfo oemowninfo.img
       ```
 - [ ] An **Apple Silicon Mac** (what the maintainer uses) **or a Linux machine**.
-      Building on Linux should work but nobody has tested it end to end yet.
+      Building on Linux should work after permission fix on tarball.
 - [ ] `fastboot` and `adb` (Android platform-tools).
 - [ ] **Somewhere for the root filesystem to live**. A **microSD card** is the
-      easy choice and needs no repartitioning. A UFS partition is the advanced
-      choice. See [where root lives](#where-root-lives).
-- [ ] A **packaging baseline** (a known-good asphalt boot image pair). See
-      [step 0](#0-sources-and-a-packaging-baseline). You can't build without one.
+      easy way to try it out and needs no repartitioning, but it's slow for daily use.
+      A UFS partition is faster, and it's the advanced choice. See [where root lives](#where-root-lives).
+- [ ] A **static aarch64 `busybox`** for the boot ramdisk. The ALARM chroot from
+      step 1 has one, see [step 0](#busybox).
 
-Linux goes on **slot B**. Android stays on slot A, and
-`fastboot --set-active=a && fastboot reboot` always takes you back.
+Linux goes on **slot A/B**. Android stays on slot A/B, and
+`fastboot --set-active=<android slot> && fastboot reboot` always takes you back.
+
+Android slot is depends on which OS you're using, if ZUI, then linux must be on slot B, if LineageOS or ported firmware (ColorOS, HyperOS), it's flexible
 
 ## First build, the short version
 
@@ -57,13 +59,14 @@ cd <work>
 git clone https://github.com/lenovo-basements/linux-asphalt-build
 git clone https://github.com/lenovo-basements/asphalt-firmware
 git clone --depth 1 https://github.com/lenovo-basements/lenovo-sm8475-mainline mainline
-# put the baseline (step 0) in <work>/baseline and check it:
-(cd baseline && shasum -a 256 -c SHA256SUMS)
+
+# 1. set up the ALARM chroot (step 1), then inside it, once:
+pacman -S --needed busybox && cp /usr/bin/busybox <work>/busybox
 
 # 2. kernel (host)
 linux-asphalt-build/scripts/kernel/build-kernel.sh \
     --src mainline --out <work>/kbuild --artifacts <work>/out/first \
-    --baseline <work>/baseline --defconfig y700.config
+    --busybox <work>/busybox --defconfig y700.config
 grep -m1 '^ROOT_UUID=' out/first/flash/init   # remember this UUID for step 5
 
 # 3-5. inside the ALARM chroot (step 1), with <work> mounted at the same path
@@ -76,22 +79,24 @@ mkfs.ext4 -L asphalt-arch -U <ROOT_UUID> -E root_owner=0:0 \
 
 # 5. write asphalt-root.img to a microSD partition (see "where root lives")
 # 6. flash, tablet in fastboot (host)
-fastboot flash boot_b        out/first/flash/boot.img
-fastboot flash vendor_boot_b out/first/flash/vendor_boot.img
-fastboot --set-active=b && fastboot reboot
+fastboot flash boot_<slot>        out/first/flash/boot.img
+fastboot erase dtbo
+fastboot flash vendor_boot_<slot> out/first/flash/vendor_boot.img
+fastboot --set-active=<slot> && fastboot reboot
 ```
+note: if you're not using baseline (baseline dtbo is just dummy dtbo)
 
 Log in as `<name>` with the password `<name>`, then **change it** with `passwd`.
 
 | step | script | runs on | produces |
 |---|---|---|---|
-| 0 | `git clone` + baseline | host | the three repos, `baseline/` |
+| 0 | `git clone` | host | the three repos (+ `busybox` from step 1) |
 | 1 | (one-time) build host | Mac or Linux | an aarch64 Arch Linux ARM chroot |
 | 2 | `kernel/build-kernel.sh` | Mac or Linux | `Image`, modules, DTBs, `boot.img` + `vendor_boot.img` |
 | 3 | `build-packages.sh` | ALARM (chroot or tablet), root | `pkgbuilds/out/*.pkg.tar.*` |
 | 4 | `build-rootfs.sh` | ALARM (chroot or tablet), root | a populated root filesystem tree |
 | 5 | `mkfs.ext4 -d` | ALARM chroot or Linux | `asphalt-root.img` |
-| 6 | `fastboot` (by hand) | host | a tablet that boots Linux on slot B |
+| 6 | `fastboot` (by hand) | host | a tablet that boots Linux on slot A/B |
 
 The kernel comes before the packages because `linux-asphalt`, the package
 that carries the kernel modules, is made from a kernel build. Without it the
@@ -104,63 +109,75 @@ Expected layout, with the repos side by side:
   linux-asphalt-build/   this repo
   asphalt-firmware/      firmware + sensor/audio configs (asphalt-firmware package)
   mainline/              kernel tree with the asphalt patches (lenovo-sm8475-mainline)
-  baseline/              packaging baseline (step 0)
+  busybox                static aarch64 busybox for the boot ramdisk (step 0)
 ```
 
-## 0. Sources and a packaging baseline
+## 0. Sources and busybox
 
 The kernel is the [lenovo-sm8475-mainline](https://github.com/lenovo-basements/lenovo-sm8475-mainline)
 tree. `--depth 1` saves you several GB of Linux history. The firmware lives in
 [asphalt-firmware](https://github.com/lenovo-basements/asphalt-firmware), and
 `build-kernel.sh` and `build-packages.sh` look for it next to this repo.
 
-### Packaging baseline
+### How the boot images are made
 
-`build-kernel.sh` doesn't build a boot image from scratch. It takes an
-existing asphalt `boot.img` + `vendor_boot.img` (the **baseline**) and swaps
-in your new kernel and DTB. It keeps the baseline's boot ramdisk, which holds the
-small loader (`/init`, the same as [`initramfs/init`](../initramfs/init)) that
-finds and mounts the root filesystem, plus the early firmware. It also saves
-copies of the baseline pair as `boot-recovery.img` / `vendor_boot-recovery.img`
-so you can go back.
+`build-kernel.sh` makes both images from scratch with `make-boot.py`. Nothing
+comes from stock Android:
 
-#### First-time setup
+| image | contents |
+|---|---|
+| `boot.img` | your kernel + the boot ramdisk: the loader [`initramfs/init`](../initramfs/init) (finds and mounts the root filesystem by `ROOT_UUID`), `busybox` for it, and the firmware the kernel loads before root is mounted (from asphalt-firmware, same paths as the `asphalt-firmware` package) |
+| `vendor_boot.img` | your DTB (with the ABL overlay applied), an empty vendor ramdisk |
 
-A **stock** `boot.img` won't work: it has no asphalt loader. There is no
-script yet to make a baseline from stock images.
+The kernel command line is [`kernel/boot.cmdline`](kernel/boot.cmdline). Header
+values (Android boot header v4, load addresses, OS version) are the ones
+Lenovo's ABL already boots. The loader's `ROOT_UUID` ends up in
+`<artifacts>/flash/init` and `flash/manifest.json`, and your root image must use it
+([step 5](#5-image)).
 
-1. Download the maintainer's baseline:
-   [Google Drive folder](https://drive.google.com/drive/folders/1m4dMdG6Tgw29iaa3FZh0e9Jd-EAKGybT?usp=sharing)
-   (from [issue #1](https://github.com/lenovo-basements/linux-asphalt-build/issues/1)).
-   It is built for the ROW tablet.
-2. Put the files in `<work>/baseline/`. The directory must contain these:
+### busybox
 
-   | file | what |
-   |---|---|
-   | `boot.img`, `vendor_boot.img` | the pair, from the same build, Android boot header v4 |
-   | `dtbo.img` (or `dtbo-retained.img`) | a record of the DTBO that goes with the pair. It is never flashed |
-   | `kernel.release` | the baseline's kernel release, one line |
-   | `SHA256SUMS` | checksums of the two boot images and the DTBO, bare filenames |
+The loader is a `/bin/sh` script, so the ramdisk needs a **statically linked
+aarch64** busybox (there's no libc in the ramdisk). Arch Linux ARM's busybox
+package is static. Copy it out of the chroot from [step 1](#1-build-host):
 
-   If the download has only the three `.img` files, create the other two:
-   ```sh
-   cd <work>/baseline
-   # the kernel in boot.img is stored uncompressed, so its version string is readable
-   LC_ALL=C grep -a -o -m1 'Linux version [^ ]*' boot.img | cut -d' ' -f3 > kernel.release
-   shasum -a 256 boot.img vendor_boot.img dtbo.img > SHA256SUMS
-   ```
-3. Check the baseline with `shasum -a 256 -c SHA256SUMS`. Every line should say `OK`.
-4. Pass that directory as `--baseline`. The loader in this baseline looks for
-   the root filesystem by `ROOT_UUID`. After your first kernel build, run
-   `grep -m1 '^ROOT_UUID=' <artifacts>/flash/init` to read it, or look in
-   `flash/manifest.json` under `loader.identity.ROOT_UUID`. Your root image
-   must use that UUID ([step 5](#5-image)).
+```sh
+pacman -S --needed busybox
+cp /usr/bin/busybox <work>/busybox
+```
 
-#### Subsequent builds
+Don't use `/usr/lib/initcpio/busybox` (from `mkinitcpio-busybox`): that one is
+dynamically linked. `make-boot.py` refuses a dynamically linked or non-aarch64
+binary, so you can't pass the wrong one by accident.
 
-Point `--baseline` at the `flash/` directory of a build that has already
-booted on your tablet. That directory already has everything listed above, and its
-loader already points at your root filesystem.
+### Repackaging a baseline (optional)
+
+The old way still works: `--baseline <dir>` (instead of `--busybox`) takes a
+known-good `boot.img` + `vendor_boot.img` and swaps in only the kernel and the DTB,
+with stricter DTB checks against that pair (`package-boot.py`). It also saves the
+baseline pair as `boot-recovery.img` / `vendor_boot-recovery.img`. The directory needs:
+
+| file | what |
+|---|---|
+| `boot.img`, `vendor_boot.img` | the pair, from the same build, Android boot header v4 |
+| `dtbo.img` (or `dtbo-retained.img`) | a record of the DTBO that goes with the pair. It is never flashed |
+| `kernel.release` | the baseline's kernel release, one line |
+| `SHA256SUMS` | checksums of the two boot images and the DTBO, bare filenames |
+
+The `flash/` directory of any earlier build already has all of these. To start
+from the maintainer's build instead, use the
+[Google Drive folder](https://drive.google.com/drive/folders/1m4dMdG6Tgw29iaa3FZh0e9Jd-EAKGybT?usp=sharing)
+from [issue #1](https://github.com/lenovo-basements/linux-asphalt-build/issues/1). If it
+has only the three `.img` files, create the other two:
+
+```sh
+cd <work>/baseline
+# the kernel in boot.img is stored uncompressed, so its version string is readable
+LC_ALL=C grep -a -o -m1 'Linux version [^ ]*' boot.img | cut -d' ' -f3 > kernel.release
+shasum -a 256 boot.img vendor_boot.img dtbo.img > SHA256SUMS
+```
+
+Notes: this will get removed soon, however for few days i'll just leave it be.
 
 ## 1. Build host
 
@@ -196,22 +213,21 @@ other mirrors in `/etc/pacman.d/mirrorlist`.
 Mounting `<work>` at the same path inside the chroot means paths like
 `<work>/out/first` work on both sides.
 
-This rootfs is built on macOS 27.3 (Golden Gate) on a MacBook Pro M1. Nobody has
-tested the build on native Linux yet (Asahi Linux or amd64 Linux), so the steps
-there might be a bit different.
+This rootfs is built on macOS 27.3 (Golden Gate) on a MacBook Pro M1. 
+Linux should works after permission fixes, lmk then
 
 ## 2. Kernel
 
 `build-kernel.sh` builds the arm64 `Image`, the modules and the asphalt (ROW) DTB from a
-kernel tree, then repackages a flashable `boot.img` + `vendor_boot.img` from the
-[baseline](#packaging-baseline). It never flashes anything.
+kernel tree, then makes a flashable `boot.img` + `vendor_boot.img`
+([how](#how-the-boot-images-are-made)). It never flashes anything.
 
 ```sh
 scripts/kernel/build-kernel.sh \
     --src <work>/mainline \
     --out <work>/kbuild \
     --artifacts <work>/out/my-build \
-    --baseline <work>/baseline \
+    --busybox <work>/busybox \
     --defconfig y700.config \
     --localversion -asphalt
 ```
@@ -224,11 +240,12 @@ The last lines of a good build are `BUILD-OK <release>` and `PACKAGE-OK <dir>`.
 | `--out` | Kernel build directory (`O=`). Reuse it between builds: incremental builds are much faster. |
 | `--defconfig` | First build only: when `--out` has no `.config` yet, generate one with this config target from the kernel tree (`y700.config` = `arch/arm64/configs/y700.config`). An existing `.config` is never overwritten. |
 | `--artifacts` | Where the results go (see below). |
-| `--baseline` | Required directory with a [known-good boot image pair](#packaging-baseline). |
+| `--busybox` | Static aarch64 busybox for the boot ramdisk ([step 0](#busybox)). Builds the boot images from scratch. |
+| `--baseline` | Instead of `--busybox`: [repackage a known-good boot image pair](#repackaging-a-baseline-optional). |
 | `--localversion` | Optional `CONFIG_LOCALVERSION`. Use a new one per experiment so its modules don't overwrite the running kernel's. |
 | `--fragment` | Allow to make fragment config to merge with main kernel config, for experimenting or improving the kernel without need to modify kernel config, Values that did not survive are listed in `<artifacts>/fragments/not-applied.txt`. |
-| `--allow-compatible` | The exact root compatible packaging accepts although it differs from the baseline (space-separated). Defaults to the asphalt ROW list, rename. msm-id, board-id and region_country always have to match. |
-| `--firmware-dir` | asphalt-firmware checkout (default: next to linux-asphalt-build). If the baseline ramdisk still uses `qcom/lenovo/tb320fc`, packaging renames those paths to `qcom/lenovo/asphalt` and checks the renamed files against this checkout. If the ramdisk already uses the new paths, the rename is skipped. |
+| `--allow-compatible` | `--baseline` only. The exact root compatible packaging accepts although it differs from the baseline (space-separated). Defaults to the asphalt ROW list, rename. msm-id, board-id and region_country always have to match. |
+| `--firmware-dir` | asphalt-firmware checkout (default: next to linux-asphalt-build). The boot ramdisk firmware comes from here. With `--baseline`: if the baseline ramdisk still uses `qcom/lenovo/tb320fc`, packaging renames those paths to `qcom/lenovo/asphalt` and checks the renamed files against this checkout. If the ramdisk already uses the new paths, the rename is skipped. |
 | `-j` | Parallel jobs (default: all CPUs). |
 
 `package-boot.py` also takes `--kernel-compression {none,lz4,gz}` (default
@@ -272,7 +289,7 @@ as it straight to crashdump with error code 669
   source.commit  source.patch      exact source used
   package.log                      packaging report (attach it to bug reports)
   flash/boot.img  flash/vendor_boot.img       what you flash
-  flash/boot-recovery.img  flash/vendor_boot-recovery.img   the baseline pair, to go back
+  flash/boot-recovery.img  flash/vendor_boot-recovery.img   --baseline only: the baseline pair
   flash/init  flash/manifest.json  flash/FLASHING.txt  flash/SHA256SUMS
 ```
 
@@ -356,7 +373,7 @@ The loader checks `/dev/sda16` first, then every UFS partition
 first one whose filesystem UUID is `ROOT_UUID`. It scans **partitions**, not
 whole disks, so the image has to go into a partition.
 
-**microSD (recommended for a first try).** The card needs one partition at least
+**microSD (good for trying it out and bringup).** The card needs one partition at least
 as big as the image. Everything on the card is erased.
 
 - Linux host: partition the card, then
@@ -372,7 +389,9 @@ as big as the image. Everything on the card is erased.
   the ext4 UUID inside.
 
 A card that works well in a Nintendo Switch (SanDisk Ultra / Extreme) is fine.
-It's slower than UFS, but you don't have to repartition anything.
+Nothing is broken on microSD, it's just slow: fine for a first boot or bringup,
+but for daily use move root to a UFS partition later. Copy the image over, and the same
+`ROOT_UUID` boots from either.
 
 **UFS partition (advanced).** You need a free partition, for example by shrinking
 `userdata`. Repartitioning wipes userdata, so back up first (see
@@ -386,19 +405,21 @@ download: write it from recovery
 With the tablet in fastboot (from Android: `adb reboot bootloader`):
 
 ```sh
-fastboot flash boot_b     <artifacts>/flash/boot.img
-fastboot flash vendor_boot_b <artifacts>/flash/vendor_boot.img
-fastboot --set-active=b && fastboot reboot
+fastboot flash boot_<slot>     <artifacts>/flash/boot.img
+fastboot erase dtbo
+fastboot flash vendor_boot_<slot> <artifacts>/flash/vendor_boot.img
+fastboot --set-active=<slot> && fastboot reboot
 ```
+note: if you're not using baseline (baseline dtbo is just dummy dtbo)
 
 `<artifacts>/flash/FLASHING.txt` has the same commands with your paths filled in.
 
 - **Always flash both images together.** The DTB lives in `vendor_boot`, so a
   `boot.img` on its own boots with the wrong device tree.
-- **Don't flash `dtbo-retained.img`.** Slot B keeps the DTBO that's already on it.
-- To go back: `fastboot --set-active=a && fastboot reboot` returns to Android.
-  `flash/boot-recovery.img` + `vendor_boot-recovery.img` (the baseline pair)
-  restore the previous Linux kernel.
+- **Don't flash `dtbo-retained.img`.** Slot A/B keeps the DTBO that's already on it.
+- To go back: `fastboot --set-active=<android slot> && fastboot reboot` returns to Android.
+  To get the previous Linux kernel back, flash the `flash/` pair of the build
+  that last booted, so **keep that directory**.
 - the script doesn't have automated image flashing, user **must** do it yourself,
   to avoid catastrophic error that will waste user time to restore with EDL package.
 
@@ -422,14 +443,18 @@ For every later kernel, **its modules must be on the tablet before it boots**
 | you see | it means / do this |
 | --- | --- |
 | `<out>/.config missing. First build?` | Add `--defconfig y700.config`. |
-| `Baseline checksum mismatch` / `Baseline checksums must cover ...` | `SHA256SUMS` doesn't match the files. Re-download, or regenerate it ([step 0](#first-time-setup)). |
-| `No such file or directory: .../kernel.release` | The baseline lacks `kernel.release`. See [step 0](#first-time-setup). |
+| `need --busybox ...` | Pass `--busybox`, see [step 0](#busybox). |
+| `busybox: dynamically linked` / `not an aarch64 binary` | Use the ALARM `/usr/bin/busybox` ([step 0](#busybox)), not your host's. |
+| `--firmware-dir lacks ...` / `asphalt-firmware not found` | Clone asphalt-firmware next to this repo, or pass `--firmware-dir`. |
+| `DTB lacks qcom,msm-id ...` | The DTB has no ABL overlay; `build-kernel.sh` does that for you, so this only happens running `make-boot.py` by hand with the upstream DTB. |
+| `Baseline checksum mismatch` / `Baseline checksums must cover ...` | `--baseline` only: `SHA256SUMS` doesn't match the files. Regenerate it ([repackaging](#repackaging-a-baseline-optional)). |
+| `No such file or directory: .../kernel.release` | `--baseline` only: the baseline lacks `kernel.release` ([repackaging](#repackaging-a-baseline-optional)). |
 | `Loader dependencies must be built-in: CONFIG_...` | Your config turned off something the loader needs before root is mounted. Set those to `=y`. |
-| `Only Android boot header v4 is supported` / `Expected Android boot image` | The baseline isn't an asphalt boot pair (a stock image, or the files were swapped). |
-| `Bootloader identity changed: ...` | Your DTB's `msm-id`, `board-id` or `region_country` differs from the baseline's. ABL picks the DTB by these, so it would reject it. |
+| `Only Android boot header v4 is supported` / `Expected Android boot image` | `--baseline` only: the baseline isn't an asphalt boot pair (a stock image, or the files were swapped). |
+| `Bootloader identity changed: ...` | `--baseline` only: your DTB's `msm-id`, `board-id` or `region_country` differs from the baseline's. ABL picks the DTB by these, so it would reject it. |
 | Errors about case, or files that exist twice, on macOS | The kernel tree isn't on a case-sensitive volume. |
 | The tablet shows the logo, then reboots after ~25 s | The loader didn't find root: check the UUID (`blkid` from Linux / recovery) and that the card is seated. |
-| The tablet goes straight back to fastboot or loops | Go back with `fastboot --set-active=a`, or flash the `*-recovery.img` pair to slot B. |
+| The tablet goes straight back to fastboot or loops | Go back with `fastboot --set-active=<working slot>`, or flash the `flash/` pair of the last build that booted. |
 | It boots, but there's no Wi-Fi, sound or rotation | The modules for this kernel release are missing. See [installing a new kernel](#installing-a-new-kernel-later-builds). |
 
 Still stuck? Open an [issue](https://github.com/lenovo-basements/linux-asphalt-build/issues)

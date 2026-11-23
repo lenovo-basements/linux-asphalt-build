@@ -94,7 +94,7 @@ this tablet uses [AVBv2](https://android.googlesource.com/platform/external/avb/
 **Warning**
 
 - ZUI is **NOT** support for relock bootloader, don't even dare trying it
-- **BACKUP** sn.img, persist.img and devinfo.img first (these 3 images are very important, one is serial number information (if it gone, you're fucked) persist contain sensors calibration and others data, third is device info, but better backup at first place). if thing went wrong, i'll take 0 responsible.
+- **BACKUP** sn.img, persist.img and oemowninfo.img first (these 3 images are very important, one is serial number information (if it gone, you're fucked) persist contain sensors calibration and others data, third is device info, but better backup at first place). if thing went wrong, i'll take 0 responsible.
 - once you do this, you **must** sign images everytime you update kernel, are you sure you want to do this?
 - LineageOS is recommend target to relock bootloader, however, just pick whatever AOSP you like (PixelOS, EvolutionX or whatever.)
 - if you're using [armada os](https://github.com/armada-os/armada), or any distro that require to modified ABL **DO NOT** relock the bootloader
