@@ -22,13 +22,16 @@ Scripts and device support for running **Arch Linux ARM** on the
 - i'm not gonna submit this to LKML, dealing with android giving me enough headache, i didn't want an extras
 - this initially start as personal project (and mainly for reading eroge). so yea, i can't fix everything myself, especially gaming.
 - this rootfs / mainline kernel **serve** as base foundation, aiming to get base function solid and properly working, whatever you do is up to you
+- There are no prebuilt images (and will never be). You build the kernel and the root,
+filesystem yourself, then flash two images to **slot A/B** with `fastboot`.
+Android stays on slot A/B, so you can always go back.
 
 ## Resources
 
 - [Kernel source](https://github.com/lenovo-basements/lenovo-sm8475-mainline)
 - [Firmware repo](https://github.com/lenovo-basements/asphalt-firmware)
 - [What’s working](#whats-working)
-- [Build instructions](scripts/README.md)
+- [Build guide (start here)](scripts/README.md)
 - [Relock bootloader](#relock-bootloader)
 - <a href="/docs/camera.md">the rant: camera</a>
 

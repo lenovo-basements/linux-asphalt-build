@@ -3,14 +3,16 @@
 #
 #   scripts/kernel/build-kernel.sh --src ~/linux --baseline ~/asphalt-baseline \
 #       --out /tmp/asphalt-build --artifacts ./out [--localversion -asphalt] \
-#       [--fragment scripts/kernel/asphalt.config ...]
+#       [--fragment scripts/kernel/asphalt.config ...] [--defconfig y700.config]
 #
+# --defconfig only acts when <out>/.config does not exist yet (a first build);
+# an existing .config is never overwritten.
 # Works on Linux (native arm64 or cross with LLVM) and on macOS (Homebrew
-# llvm, lld, make, gnu-sed, coreutils). See scripts/kernel/README.md.
+# llvm, lld, make, gnu-sed, coreutils). See scripts/README.md.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC="" OUT="" ART="" BASELINE="" LOCALVERSION="" JOBS=""
+SRC="" OUT="" ART="" BASELINE="" LOCALVERSION="" JOBS="" DEFCONFIG=""
 FRAGMENTS=()
 DTB_NAME=sm8475-lenovo-asphalt-row
 # root compatible differs from it on purpose. package-boot.py accepts exactly this
@@ -22,7 +24,7 @@ FIRMWARE_RENAMES=(
 )
 FIRMWARE_DIR="$HERE/../../../asphalt-firmware"
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --src) SRC="$2"; shift 2 ;;
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --artifacts) ART="$2"; shift 2 ;;
         --baseline) BASELINE="$2"; shift 2 ;;
         --localversion) LOCALVERSION="$2"; shift 2 ;;
+        --defconfig) DEFCONFIG="$2"; shift 2 ;;
         --fragment) FRAGMENTS+=("$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"); shift 2 ;;
         --allow-compatible) ALLOW_COMPATIBLE="$2"; shift 2 ;;
         --firmware-dir) FIRMWARE_DIR="$2"; shift 2 ;;
@@ -39,7 +42,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ -n "$SRC" && -n "$OUT" && -n "$ART" && -n "$BASELINE" ]] || usage 1
-[[ -f "$OUT/.config" ]] || { echo "$OUT/.config missing: configure first (see README)" >&2; exit 1; }
+if [[ ! -f "$OUT/.config" && -z "$DEFCONFIG" ]]; then
+    echo "$OUT/.config missing. First build? Add --defconfig y700.config (see scripts/README.md)" >&2
+    exit 1
+fi
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 # Keep the builder's login and hostname out of the "Linux version" string.
 export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-asphalt}"
@@ -66,6 +72,15 @@ else
     MAKE=make
 fi
 run_make() { "$MAKE" -C "$SRC" O="$OUT" "${make_args[@]}" "$@"; }
+
+if [[ ! -f "$OUT/.config" ]]; then
+    # First build: generate .config from a config target in the kernel tree
+    # (arch/arm64/configs/y700.config).
+    mkdir -p "$OUT"
+    run_make "$DEFCONFIG"
+elif [[ -n "$DEFCONFIG" ]]; then
+    echo "note: $OUT/.config exists, ignoring --defconfig $DEFCONFIG" >&2
+fi
 
 git -C "$SRC" rev-parse HEAD > "$ART/source.commit" 2>/dev/null || true
 git -C "$SRC" diff HEAD --binary > "$ART/source.patch" 2>/dev/null || true

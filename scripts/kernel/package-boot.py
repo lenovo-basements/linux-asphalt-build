@@ -523,7 +523,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline', type=Path, required=True,
                         help='Directory with boot.img, vendor_boot.img, the DTBO image and a '
-                             'SHA256SUMS covering them (see scripts/kernel/README.md)')
+                             'SHA256SUMS covering them, plus kernel.release (see scripts/README.md)')
     parser.add_argument('--image', type=Path, required=True, help='Compiled uncompressed arm64 Image')
     parser.add_argument('--dtb', type=Path, required=True, help='Compiled DTB with symbols (dtc -@)')
     parser.add_argument('--config', type=Path, required=True, help='Config from the same kernel build')
