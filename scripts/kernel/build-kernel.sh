@@ -112,14 +112,17 @@ cp "$OUT/.config" "$ART/kernel.config"
 DTC="$OUT/scripts/dtc/dtc" FDTOVERLAY="$OUT/scripts/dtc/fdtoverlay" \
     "$HERE/apply-abl.sh" "$ART/$DTB_NAME.dtb" "$ART/$DTB_NAME-abl.dtb"
 
-rm -rf "$ART/modules-root"; mkdir -p "$ART/modules-root"
-run_make DEPMOD=true INSTALL_MOD_PATH="$ART/modules-root" INSTALL_MOD_STRIP=1 modules_install
+MOD_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/asphalt-modules.XXXXXX")"
+trap 'rm -rf "$MOD_STAGE"' EXIT
+run_make DEPMOD=true INSTALL_MOD_PATH="$MOD_STAGE" INSTALL_MOD_STRIP=1 modules_install
 # Arch Linux ARM has /lib -> usr/lib, so ship the modules under usr/lib.
-mv "$ART/modules-root/lib" "$ART/modules-root/usr-lib.tmp"
-mkdir -p "$ART/modules-root/usr" && mv "$ART/modules-root/usr-lib.tmp" "$ART/modules-root/usr/lib"
+mv "$MOD_STAGE/lib" "$MOD_STAGE/usr-lib.tmp"
+mkdir -p "$MOD_STAGE/usr" && mv "$MOD_STAGE/usr-lib.tmp" "$MOD_STAGE/usr/lib"
+chmod -R a+rX,go-w "$MOD_STAGE/usr"
 tar_flags=(--owner=0 --group=0)
 [[ "$(uname -s)" == Darwin ]] && tar_flags=(--uid 0 --gid 0 --uname root --gname root --no-xattrs)
-(cd "$ART/modules-root" && COPYFILE_DISABLE=1 tar "${tar_flags[@]}" -czf ../modules.tar.gz usr)
+(cd "$MOD_STAGE" && COPYFILE_DISABLE=1 tar "${tar_flags[@]}" -czf "$ART/modules.tar.gz" usr)
+rm -rf "$ART/modules-root"
 echo "BUILD-OK $(cat "$ART/kernel.release")"
 
 rm -rf "$ART/flash"
