@@ -15,20 +15,24 @@ esac
 printf '%s\n' "$phase" > /run/asphalt-sleep-state.tmp
 mv /run/asphalt-sleep-state.tmp /run/asphalt-sleep-state
 
+if [ "$1" = "pre" ]; then
+    # stock use s2idle for DP-connected displays, deep for everything else
+    sleep_mode=deep
+    for status in /sys/class/drm/card*-DP-*/status; do
+        [ -r "$status" ] || continue
+        if [ "$(cat "$status" 2>/dev/null)" = "connected" ]; then
+            sleep_mode=s2idle
+            break
+        fi
+    done
+    printf '%s\n' "$sleep_mode" > /sys/power/mem_sleep 2>/dev/null || true
+fi
+
 if [ "$1" = "post" ]; then
     # Restore ALSA UCM Speaker routes after DSP sleep
     /usr/bin/alsaucm -c hw:0 set _verb HiFi set _enadev Speaker 2>/dev/null || true
 
-    # 1. Unblank backlight power controller
-    echo 0 > /sys/class/backlight/ktz8866-backlight/bl_power 2>/dev/null || true
-
-    # 2. Ensure backlight level is visible
-    CUR_B=$(cat /sys/class/backlight/ktz8866-backlight/brightness 2>/dev/null || echo 0)
-    if [ "$CUR_B" -lt 164 ]; then
-        echo 800 > /sys/class/backlight/ktz8866-backlight/brightness 2>/dev/null || true
-    fi
-
-    # 3. Queue a separate unit ordered after systemd-suspend.service.
+    # Queue display wake + backlight unblank after user.slice thaws.
     # Sleep hooks run while user.slice is frozen: do not contact its D-Bus
     # here or depend on a fixed delay to guess when it will be thawed.
     systemctl --no-block restart asphalt-resume-display.service
