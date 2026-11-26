@@ -30,13 +30,13 @@ DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "as
 FACES = DATA / "faces.npy"
 SIZE = (640, 480)
 WARMUP_S = 0.4          # auto-exposure settles over the first frames
-MATCH = 0.5             # SFace cosine similarity (OpenCV suggests 0.363); owner ~0.75
+MATCH = float(os.environ.get("ASPHALT_FACE_MATCH", "0.40"))  # SFace cosine similarity (OpenCV suggests 0.363)
 NEEDED, WINDOW = 3, 5   # matches among the last detected faces; no-face frames don't count
 TIMEOUT_S = 5.0
-DETECT_SCORE = 0.7      # YuNet confidence
+DETECT_SCORE = 0.55     # YuNet confidence
 SAMPLES = 10            # embeddings per enrolment run
 MAX_SAMPLES = 60        # enroll --add keeps the newest
-MIN_FACE = 64           # pixels: about arm's length at 640x480
+MIN_FACE = 48           # pixels: comfortable tablet distance at 640x480
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "asphalt-face"
 
 # Upright first, then cv2.ROTATE_90_CLOCKWISE (0), ROTATE_90_COUNTERCLOCKWISE (2), ROTATE_180 (1).
@@ -95,6 +95,7 @@ class Faces:
         self.cv2 = cv2
         self.detector = cv2.FaceDetectorYN.create(str(MODELS / "yunet.onnx"), "", SIZE, DETECT_SCORE, 0.3, 50)
         self.recognizer = cv2.FaceRecognizerSF.create(str(MODELS / "sface.onnx"), "")
+        self.clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
         self.rotation = None  # sticks once a face shows up
 
     def rotated(self, image, rotation):
@@ -102,8 +103,13 @@ class Faces:
             return image
         return self.cv2.rotate(image, rotation)
 
-    def embedding(self, image):
-        """(embedding, problem): exactly one large enough face, else None."""
+    def _enhance(self, image):
+        ycrcb = self.cv2.cvtColor(image, self.cv2.COLOR_BGR2YCrCb)
+        y, cr, cb = self.cv2.split(ycrcb)
+        merged = self.cv2.merge((self.clahe.apply(y), cr, cb))
+        return self.cv2.cvtColor(merged, self.cv2.COLOR_YCrCb2BGR)
+
+    def _detect_in(self, image):
         order = [self.rotation] if self.rotation is not None else list(ROTATIONS)
         for rotation in order:
             frame = self.rotated(image, rotation)
@@ -122,6 +128,16 @@ class Faces:
             return self.recognizer.feature(aligned).flatten(), None
         self.rotation = None
         return None, "no face"
+
+    def embedding(self, image):
+        """(embedding, problem): exactly one large enough face, else None."""
+        luma = float(image[::8, ::8].mean())
+        if luma < 65.0:
+            return self._detect_in(self._enhance(image))
+        vector, problem = self._detect_in(image)
+        if vector is None and problem == "no face" and luma < 120.0:
+            return self._detect_in(self._enhance(image))
+        return vector, problem
 
     def similarity(self, a, b):
         import numpy
